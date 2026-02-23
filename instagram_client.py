@@ -211,15 +211,11 @@ class InstagramClient:
         return resp.json()
 
     def get_media_insights(self, media_id, media_type="IMAGE"):
-        """게시물의 인사이트 데이터를 조회합니다. 미디어 타입별로 사용 가능한 지표가 다릅니다."""
+        """게시물의 인사이트 데이터를 조회합니다. v22.0+ 메트릭 사용."""
         url = f"{self.base_url}/{media_id}/insights"
 
-        # 기본 지표
-        metrics = ["impressions", "reach", "saved"]
-
-        # 동영상/릴스는 plays(조회수) 추가
-        if media_type in ("VIDEO", "REEL"):
-            metrics.append("plays")
+        # v22.0+ 지원 메트릭 (impressions/plays 삭제됨)
+        metrics = ["reach", "saved", "shares", "likes", "comments", "views"]
 
         result = {"_errors": []}
 

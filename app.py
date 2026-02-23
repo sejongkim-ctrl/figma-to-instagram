@@ -338,27 +338,27 @@ def render_insights_page(account):
         return sum(p.get("insights", {}).get(key, 0) for p in posts
                    if isinstance(p.get("insights", {}).get(key, 0), (int, float)))
 
-    total_likes = sum(p.get("like_count", 0) for p in posts)
-    total_comments = sum(p.get("comments_count", 0) for p in posts)
+    total_likes = _safe_sum("likes")
+    total_comments = _safe_sum("comments")
     total_saves = _safe_sum("saved")
+    total_shares = _safe_sum("shares")
+    total_views = _safe_sum("views")
     total_reach = _safe_sum("reach")
-    total_impressions = _safe_sum("impressions")
-    total_plays = _safe_sum("plays")
 
     # 인사이트 데이터가 하나라도 있는지 체크
     has_insights = any(
-        p.get("insights", {}).get("impressions") is not None
+        p.get("insights", {}).get("reach") is not None
         for p in posts if "_errors" not in p.get("insights", {})
     )
 
     na = "–"  # 인사이트 없을 때 표시
     m1, m2, m3, m4, m5, m6 = st.columns(6)
-    m1.metric("❤️ 좋아요", f"{total_likes:,}")
-    m2.metric("💬 댓글", f"{total_comments:,}")
+    m1.metric("❤️ 좋아요", f"{total_likes:,}" if has_insights else na)
+    m2.metric("💬 댓글", f"{total_comments:,}" if has_insights else na)
     m3.metric("📌 저장", f"{total_saves:,}" if has_insights else na)
-    m4.metric("▶️ 조회", f"{total_plays:,}" if has_insights else na)
-    m5.metric("👁️ 도달", f"{total_reach:,}" if has_insights else na)
-    m6.metric("📊 노출", f"{total_impressions:,}" if has_insights else na)
+    m4.metric("🔄 공유", f"{total_shares:,}" if has_insights else na)
+    m5.metric("👁️ 조회", f"{total_views:,}" if has_insights else na)
+    m6.metric("📣 도달", f"{total_reach:,}" if has_insights else na)
 
     st.divider()
 
@@ -394,19 +394,17 @@ def render_insights_page(account):
                     mtype = type_label.get(post.get("media_type", ""), "기타")
                 st.caption(f"{ts} · {mtype}")
 
-                likes = post.get("like_count", 0)
-                comments = post.get("comments_count", 0)
                 ins = {k: v for k, v in post.get("insights", {}).items()
                        if k != "_errors"}
+                likes = ins.get("likes", "–")
+                comments = ins.get("comments", "–")
                 saves = ins.get("saved", "–")
+                shares = ins.get("shares", "–")
+                views = ins.get("views", "–")
                 reach = ins.get("reach", "–")
-                plays = ins.get("plays", None)
 
-                line1 = f"❤️ **{likes}**  💬 **{comments}**  📌 **{saves}**"
-                if plays is not None:
-                    line1 += f"  ▶️ **{plays:,}**"
-                st.markdown(line1)
-                st.caption(f"👁️ 도달 {reach}  ·  📊 노출 {ins.get('impressions', '–')}")
+                st.markdown(f"❤️ **{likes}**  💬 **{comments}**  📌 **{saves}**  🔄 **{shares}**")
+                st.caption(f"👁️ 조회 {views:,}  ·  📣 도달 {reach:,}" if isinstance(views, int) else f"👁️ 조회 {views}  ·  📣 도달 {reach}")
 
                 caption = post.get("caption") or ""
                 if caption:
@@ -427,12 +425,12 @@ def render_insights_page(account):
         rows.append({
             "날짜": post.get("timestamp", "")[:10],
             "타입": "릴스" if is_reels else {"IMAGE": "이미지", "VIDEO": "동영상", "CAROUSEL_ALBUM": "캐러셀"}.get(post.get("media_type", ""), "기타"),
-            "좋아요": post.get("like_count", 0),
-            "댓글": post.get("comments_count", 0),
+            "좋아요": ins.get("likes", ""),
+            "댓글": ins.get("comments", ""),
             "저장": ins.get("saved", ""),
-            "조회수": ins.get("plays", ""),
+            "공유": ins.get("shares", ""),
+            "조회수": ins.get("views", ""),
             "도달": ins.get("reach", ""),
-            "노출": ins.get("impressions", ""),
             "캡션": (post.get("caption") or "")[:100],
             "링크": post.get("permalink", ""),
         })
