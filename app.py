@@ -1,3 +1,4 @@
+import base64
 import json
 import os
 import re
@@ -167,9 +168,34 @@ def group_frames_by_date(frames):
     return dict(sorted(groups.items(), reverse=True)), ungrouped
 
 
-def publish_one_group(group_name, node_ids, caption, scheduled_time, account, status_container):
-    """하나의 그룹을 Instagram 캐러셀로 발행합니다. 결과 dict를 반환합니다."""
-    result_info = {"group": group_name, "count": len(node_ids), "caption": caption, "account_name": account["name"], "success": False}
+def upload_bytes_to_imgbb(file_bytes, filename, expiration=86400):
+    """업로드된 파일 바이트를 imgbb에 직접 업로드합니다."""
+    image_data = base64.b64encode(file_bytes).decode("utf-8")
+    api_key = os.getenv("IMGBB_API_KEY", "")
+    if not api_key:
+        try:
+            api_key = st.secrets["api"]["IMGBB_API_KEY"]
+        except Exception:
+            pass
+    payload = {
+        "key": api_key,
+        "image": image_data,
+        "name": filename,
+        "expiration": expiration,
+    }
+    resp = req.post("https://api.imgbb.com/1/upload", data=payload)
+    resp.raise_for_status()
+    result = resp.json()
+    if not result.get("success"):
+        raise RuntimeError(f"imgbb 업로드 실패: {result}")
+    return result["data"]["url"]
+
+
+def publish_one_group(group_name, group_info, caption, scheduled_time, account, status_container):
+    """하나의 그룹을 Instagram에 발행합니다. source별로 처리가 다릅니다."""
+    source = group_info["source"]
+    count = group_info["count"]
+    result_info = {"group": group_name, "count": count, "caption": caption, "account_name": account["name"], "success": False}
 
     try:
         # 토큰 사전 검증
@@ -185,23 +211,44 @@ def publish_one_group(group_name, node_ids, caption, scheduled_time, account, st
             err = verify_resp.json().get("error", {}).get("message", verify_resp.text)
             raise RuntimeError(f"토큰 검증 실패: {err}")
 
-        status_container.write(f"📐 [{group_name}] Figma에서 이미지 추출 중...")
-        figma = FigmaClient()
-        image_urls = figma.export_images(node_ids, fmt="png", scale=2)
+        # 소스별 이미지 공개 URL 준비
+        if source == "figma":
+            node_ids = group_info["node_ids"]
 
-        status_container.write(f"⬇️ [{group_name}] 이미지 다운로드 중...")
-        figma.download_images(image_urls)
-        ordered_files = []
-        for nid in node_ids:
-            safe = nid.replace(":", "-")
-            path = os.path.join("downloads", f"frame_{safe}.png")
-            if os.path.exists(path):
-                ordered_files.append(path)
+            status_container.write(f"📐 [{group_name}] Figma에서 이미지 추출 중...")
+            figma = FigmaClient()
+            image_urls = figma.export_images(node_ids, fmt="png", scale=2)
 
-        status_container.write(f"☁️ [{group_name}] 이미지 업로드 중...")
-        host = ImageHost()
-        public_urls = host.upload_batch(ordered_files, expiration=86400)
+            status_container.write(f"⬇️ [{group_name}] 이미지 다운로드 중...")
+            figma.download_images(image_urls)
+            ordered_files = []
+            for nid in node_ids:
+                safe = nid.replace(":", "-")
+                path = os.path.join("downloads", f"frame_{safe}.png")
+                if os.path.exists(path):
+                    ordered_files.append(path)
 
+            status_container.write(f"☁️ [{group_name}] imgbb 업로드 중...")
+            host = ImageHost()
+            public_urls = host.upload_batch(ordered_files, expiration=86400)
+
+        elif source == "upload":
+            files = group_info["files"]
+            status_container.write(f"☁️ [{group_name}] imgbb 업로드 중 ({len(files)}장)...")
+            public_urls = []
+            for i, f in enumerate(files):
+                status_container.write(f"☁️ [{group_name}] 업로드 {i+1}/{len(files)}: {f['name']}")
+                url = upload_bytes_to_imgbb(f["bytes"], f["name"])
+                public_urls.append(url)
+
+        elif source == "url":
+            public_urls = list(group_info["urls"])
+            status_container.write(f"🔗 [{group_name}] URL {len(public_urls)}개 확인됨")
+
+        else:
+            raise ValueError(f"알 수 없는 소스: {source}")
+
+        # Instagram 발행
         status_container.write(f"📸 [{group_name}] Instagram에 발행 중...")
         ig = InstagramClient()
         ig.user_id = uid
@@ -464,63 +511,200 @@ if "frames" not in st.session_state:
     st.session_state.frame_groups = None
     st.session_state.ungrouped = None
 
-col_load, col_info = st.columns([1, 3])
-with col_load:
-    if st.button("🔄 피그마 읽어오기", use_container_width=True):
-        with st.spinner("Figma에서 콘텐츠를 가져오는 중..."):
-            figma = FigmaClient()
-            all_frames = figma.get_file_frames(figma_file_key)
-            ig_frames = [
-                f for f in all_frames if "인스타그램" in f.get("page", "")
-            ]
-            if not ig_frames:
-                ig_frames = all_frames
-            st.session_state.frames = ig_frames
-            groups, ungrouped = group_frames_by_date(ig_frames)
-            st.session_state.frame_groups = groups
-            st.session_state.ungrouped = ungrouped
+if "upload_series" not in st.session_state:
+    st.session_state.upload_series = {}
+if "url_series" not in st.session_state:
+    st.session_state.url_series = {}
+if "upload_counter" not in st.session_state:
+    st.session_state.upload_counter = 0
+if "url_counter" not in st.session_state:
+    st.session_state.url_counter = 0
 
-with col_info:
-    if st.session_state.frames:
-        st.caption(
-            f"총 {len(st.session_state.frames)}개 프레임, "
-            f"{len(st.session_state.frame_groups or {})}개 이미지셋"
+tab_figma, tab_upload, tab_url = st.tabs(["📐 Figma", "📷 이미지 업로드", "🔗 URL 입력"])
+
+figma_selected = {}  # Figma 탭에서 선택된 항목
+
+# ── Tab 1: Figma ──
+with tab_figma:
+    col_load, col_info = st.columns([1, 3])
+    with col_load:
+        if st.button("🔄 피그마 읽어오기", use_container_width=True):
+            with st.spinner("Figma에서 콘텐츠를 가져오는 중..."):
+                figma = FigmaClient()
+                all_frames = figma.get_file_frames(figma_file_key)
+                ig_frames = [
+                    f for f in all_frames if "인스타그램" in f.get("page", "")
+                ]
+                if not ig_frames:
+                    ig_frames = all_frames
+                st.session_state.frames = ig_frames
+                groups, ungrouped = group_frames_by_date(ig_frames)
+                st.session_state.frame_groups = groups
+                st.session_state.ungrouped = ungrouped
+
+    with col_info:
+        if st.session_state.frames:
+            st.caption(
+                f"총 {len(st.session_state.frames)}개 프레임, "
+                f"{len(st.session_state.frame_groups or {})}개 이미지셋"
+            )
+
+    if st.session_state.frame_groups:
+        groups = st.session_state.frame_groups
+
+        selected_groups = st.multiselect(
+            "이미지셋 선택 (여러 개 선택 가능, 최신순)",
+            list(groups.keys()),
+            format_func=lambda x: f"{x} ({len(groups[x])}장)",
         )
 
-if st.session_state.frame_groups:
-    groups = st.session_state.frame_groups
+        if selected_groups:
+            st.info(f"✅ {len(selected_groups)}개 이미지셋 선택됨")
 
-    # 다중 그룹 선택 (multiselect)
-    selected_groups = st.multiselect(
-        "이미지셋 선택 (여러 개 선택 가능, 최신순)",
-        list(groups.keys()),
-        format_func=lambda x: f"{x} ({len(groups[x])}장)",
+            for grp in selected_groups:
+                group_frames = groups[grp]
+                with st.expander(f"📁 {grp} ({len(group_frames)}장)", expanded=True):
+                    selected_frames = []
+                    cols = st.columns(min(len(group_frames), 5))
+                    for i, frame in enumerate(group_frames):
+                        with cols[i % 5]:
+                            checked = st.checkbox(
+                                frame["name"],
+                                value=True,
+                                key=f"frame_{grp}_{frame['id']}",
+                            )
+                            if checked:
+                                selected_frames.append(frame)
+                    st.caption(f"{len(selected_frames)}장 선택" + (" (단일 이미지)" if len(selected_frames) == 1 else ""))
+                    if len(selected_frames) >= 1:
+                        figma_selected[grp] = [f["id"] for f in selected_frames]
+
+# ── Tab 2: 이미지 업로드 ──
+with tab_upload:
+    st.caption("PC에서 이미지 파일을 직접 올려서 Instagram에 발행합니다.")
+
+    upload_name = st.text_input(
+        "시리즈 이름",
+        placeholder="예: 0224-이벤트",
+        key="upload_series_name",
     )
 
-    if selected_groups:
-        st.info(f"✅ {len(selected_groups)}개 이미지셋 선택됨")
+    uploaded_files = st.file_uploader(
+        "이미지 파일 선택 (여러 장 가능)",
+        type=["png", "jpg", "jpeg"],
+        accept_multiple_files=True,
+        key=f"upload_files_{st.session_state.upload_counter}",
+    )
 
-        # 각 그룹의 프레임 표시 및 개별 선택
-        all_selected = {}  # {group_name: [node_ids]}
-        for grp in selected_groups:
-            group_frames = groups[grp]
-            with st.expander(f"📁 {grp} ({len(group_frames)}장)", expanded=True):
-                selected_frames = []
-                cols = st.columns(min(len(group_frames), 5))
-                for i, frame in enumerate(group_frames):
-                    with cols[i % 5]:
-                        checked = st.checkbox(
-                            frame["name"],
-                            value=True,
-                            key=f"frame_{grp}_{frame['id']}",
-                        )
-                        if checked:
-                            selected_frames.append(frame)
-                st.caption(f"{len(selected_frames)}장 선택" + (" (단일 이미지)" if len(selected_frames) == 1 else ""))
-                if len(selected_frames) >= 1:
-                    all_selected[grp] = [f["id"] for f in selected_frames]
+    if uploaded_files:
+        preview_cols = st.columns(min(len(uploaded_files), 5))
+        for i, uf in enumerate(uploaded_files):
+            with preview_cols[i % 5]:
+                st.image(uf, caption=uf.name, use_container_width=True)
 
-        st.session_state.all_selected = all_selected
+        if st.button("➕ 시리즈 추가", key="add_upload_series"):
+            name = upload_name.strip()
+            if not name:
+                st.error("시리즈 이름을 입력해주세요.")
+            elif name in st.session_state.upload_series:
+                st.error(f"'{name}' 이름이 이미 존재합니다. 다른 이름을 입력해주세요.")
+            else:
+                files_data = [{"name": uf.name, "bytes": uf.read()} for uf in uploaded_files]
+                st.session_state.upload_series[name] = files_data
+                st.session_state.upload_counter += 1
+                st.success(f"'{name}' ({len(files_data)}장) 추가됨!")
+                st.rerun()
+
+    # 추가된 업로드 시리즈 목록
+    if st.session_state.upload_series:
+        st.divider()
+        st.subheader("추가된 시리즈")
+        for sname, sfiles in list(st.session_state.upload_series.items()):
+            col1, col2 = st.columns([4, 1])
+            with col1:
+                st.write(f"📷 **{sname}** — {len(sfiles)}장")
+                mini_cols = st.columns(min(len(sfiles), 5))
+                for i, f in enumerate(sfiles):
+                    with mini_cols[i % 5]:
+                        st.caption(f["name"])
+            with col2:
+                if st.button("❌ 삭제", key=f"del_upload_{sname}"):
+                    del st.session_state.upload_series[sname]
+                    st.rerun()
+
+# ── Tab 3: URL 입력 ──
+with tab_url:
+    st.caption("공개 이미지 URL을 직접 입력하여 Instagram에 발행합니다.")
+
+    url_name = st.text_input(
+        "시리즈 이름",
+        placeholder="예: 0224-프로모션",
+        key="url_series_name",
+    )
+
+    url_text = st.text_area(
+        "이미지 URL (한 줄에 하나씩)",
+        placeholder="https://example.com/image1.png\nhttps://example.com/image2.png",
+        height=120,
+        key=f"url_input_{st.session_state.url_counter}",
+    )
+
+    parsed_urls = [u.strip() for u in url_text.strip().splitlines() if u.strip()] if url_text.strip() else []
+
+    if parsed_urls:
+        st.caption(f"{len(parsed_urls)}개 URL 감지됨")
+        preview_cols = st.columns(min(len(parsed_urls), 5))
+        for i, url in enumerate(parsed_urls):
+            with preview_cols[i % 5]:
+                try:
+                    st.image(url, caption=f"{i+1}장", use_container_width=True)
+                except Exception:
+                    st.caption(f"{i+1}. {url[:40]}...")
+
+        if st.button("➕ 시리즈 추가", key="add_url_series"):
+            name = url_name.strip()
+            if not name:
+                st.error("시리즈 이름을 입력해주세요.")
+            elif name in st.session_state.url_series:
+                st.error(f"'{name}' 이름이 이미 존재합니다.")
+            else:
+                st.session_state.url_series[name] = parsed_urls
+                st.session_state.url_counter += 1
+                st.success(f"'{name}' ({len(parsed_urls)}장) 추가됨!")
+                st.rerun()
+
+    # 추가된 URL 시리즈 목록
+    if st.session_state.url_series:
+        st.divider()
+        st.subheader("추가된 시리즈")
+        for sname, surls in list(st.session_state.url_series.items()):
+            col1, col2 = st.columns([4, 1])
+            with col1:
+                st.write(f"🔗 **{sname}** — {len(surls)}장")
+            with col2:
+                if st.button("❌ 삭제", key=f"del_url_{sname}"):
+                    del st.session_state.url_series[sname]
+                    st.rerun()
+
+# ── 전체 소스 통합 ──
+all_selected = {}
+
+# Figma 항목
+for grp, node_ids in figma_selected.items():
+    all_selected[grp] = {"source": "figma", "node_ids": node_ids, "count": len(node_ids)}
+
+# 업로드 항목
+for sname, sfiles in st.session_state.upload_series.items():
+    all_selected[f"📷 {sname}"] = {"source": "upload", "files": sfiles, "count": len(sfiles)}
+
+# URL 항목
+for sname, surls in st.session_state.url_series.items():
+    all_selected[f"🔗 {sname}"] = {"source": "url", "urls": surls, "count": len(surls)}
+
+if all_selected:
+    st.session_state.all_selected = all_selected
+elif "all_selected" in st.session_state:
+    del st.session_state.all_selected
 
 # ── 메인: Step 2 - 시리즈별 발행 설정 ─────────────────────
 
@@ -535,22 +719,39 @@ if st.session_state.get("all_selected"):
 
     account_names = [a["name"] for a in accounts]
 
-    for grp in all_selected:
-        with st.expander(f"📁 {grp} — {len(all_selected[grp])}장", expanded=True):
-            # 미리보기
+    for grp, grp_info in all_selected.items():
+        with st.expander(f"📁 {grp} — {grp_info['count']}장", expanded=True):
+            # 소스별 미리보기
             preview_key = f"preview_{grp}"
-            if st.button("👁️ 미리보기", key=f"btn_preview_{grp}"):
-                with st.spinner("Figma에서 이미지 가져오는 중..."):
-                    figma = FigmaClient()
-                    urls = figma.export_images(all_selected[grp], fmt="png", scale=1)
-                    ordered = [urls[nid] for nid in all_selected[grp] if urls.get(nid)]
-                    st.session_state[preview_key] = ordered
 
-            if st.session_state.get(preview_key):
-                preview_cols = st.columns(min(len(st.session_state[preview_key]), 5))
-                for i, url in enumerate(st.session_state[preview_key]):
+            if grp_info["source"] == "figma":
+                if st.button("👁️ 미리보기", key=f"btn_preview_{grp}"):
+                    with st.spinner("Figma에서 이미지 가져오는 중..."):
+                        figma = FigmaClient()
+                        urls = figma.export_images(grp_info["node_ids"], fmt="png", scale=1)
+                        ordered = [urls[nid] for nid in grp_info["node_ids"] if urls.get(nid)]
+                        st.session_state[preview_key] = ordered
+
+                if st.session_state.get(preview_key):
+                    preview_cols = st.columns(min(len(st.session_state[preview_key]), 5))
+                    for i, url in enumerate(st.session_state[preview_key]):
+                        with preview_cols[i % 5]:
+                            st.image(url, caption=f"{i + 1}장", use_container_width=True)
+
+            elif grp_info["source"] == "upload":
+                preview_cols = st.columns(min(grp_info["count"], 5))
+                for i, f in enumerate(grp_info["files"]):
                     with preview_cols[i % 5]:
-                        st.image(url, caption=f"{i + 1}장", use_container_width=True)
+                        st.image(f["bytes"], caption=f["name"], use_container_width=True)
+
+            elif grp_info["source"] == "url":
+                preview_cols = st.columns(min(grp_info["count"], 5))
+                for i, url in enumerate(grp_info["urls"]):
+                    with preview_cols[i % 5]:
+                        try:
+                            st.image(url, caption=f"{i + 1}장", use_container_width=True)
+                        except Exception:
+                            st.caption(f"{i + 1}. {url[:40]}...")
 
             grp_account = st.selectbox(
                 "계정",
@@ -610,7 +811,7 @@ if st.session_state.get("all_selected"):
         summary_data.append({
             "시리즈": grp,
             "계정": settings["account"]["name"],
-            "이미지": f"{len(all_selected[grp])}장",
+            "이미지": f"{all_selected[grp]['count']}장",
             "발행": mode_label,
             "캡션": settings["caption"][:30] + "..." if len(settings["caption"]) > 30 else settings["caption"],
         })
@@ -637,8 +838,8 @@ if st.session_state.get("all_selected"):
 
             # Slack 시작 알림
             start_summaries = [
-                {"name": grp, "count": len(nids), "account": group_settings[grp]["account"]["name"]}
-                for grp, nids in all_selected.items()
+                {"name": grp, "count": info["count"], "account": group_settings[grp]["account"]["name"]}
+                for grp, info in all_selected.items()
             ]
             slack_err = send_slack_start(start_summaries)
             if slack_err:
@@ -647,7 +848,7 @@ if st.session_state.get("all_selected"):
             overall_progress = st.progress(0)
             results = []
 
-            for idx, (grp, node_ids) in enumerate(all_selected.items()):
+            for idx, (grp, group_info) in enumerate(all_selected.items()):
                 # 2번째 게시물부터 Instagram rate limit 방지를 위해 대기
                 if idx > 0:
                     import time as _time
@@ -660,7 +861,7 @@ if st.session_state.get("all_selected"):
 
                 result_info = publish_one_group(
                     group_name=grp,
-                    node_ids=node_ids,
+                    group_info=group_info,
                     caption=settings["caption"],
                     scheduled_time=settings["scheduled_time"],
                     account=settings["account"],
