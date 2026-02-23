@@ -299,6 +299,7 @@ def render_insights_page(account):
             return
 
         progress = st.progress(0, text="인사이트 데이터 수집 중...")
+        insight_errors = []
         for i, post in enumerate(posts):
             try:
                 mtype = post.get("media_type", "IMAGE")
@@ -307,10 +308,22 @@ def render_insights_page(account):
                     mtype = "REEL"
                 post["_resolved_type"] = mtype
                 post["insights"] = ig.get_media_insights(post["id"], media_type=mtype)
-            except Exception:
+                # 첫 번째 에러만 수집 (진단용)
+                if "_errors" in post["insights"] and not insight_errors:
+                    insight_errors = post["insights"]["_errors"]
+            except Exception as e:
                 post["insights"] = {}
+                if not insight_errors:
+                    insight_errors.append(str(e))
             progress.progress((i + 1) / len(posts))
         progress.empty()
+
+        if insight_errors:
+            with st.expander("⚠️ 인사이트 조회 중 오류 발생 (클릭하여 상세 보기)"):
+                for err in insight_errors:
+                    st.code(err)
+                st.info("instagram_manage_insights 권한이 필요합니다. "
+                        "Meta 개발자 콘솔에서 권한을 확인하세요.")
 
         st.session_state.insights_posts = posts
 
@@ -321,22 +334,31 @@ def render_insights_page(account):
     posts = st.session_state.insights_posts
 
     # ── 요약 지표 ──
+    def _safe_sum(key):
+        return sum(p.get("insights", {}).get(key, 0) for p in posts
+                   if isinstance(p.get("insights", {}).get(key, 0), (int, float)))
+
     total_likes = sum(p.get("like_count", 0) for p in posts)
     total_comments = sum(p.get("comments_count", 0) for p in posts)
-    total_saves = sum(p.get("insights", {}).get("saved", 0) for p in posts)
-    total_shares = sum(p.get("insights", {}).get("shares", 0) for p in posts)
-    total_reach = sum(p.get("insights", {}).get("reach", 0) for p in posts)
-    total_impressions = sum(p.get("insights", {}).get("impressions", 0) for p in posts)
-    total_plays = sum(p.get("insights", {}).get("plays", 0) for p in posts)
+    total_saves = _safe_sum("saved")
+    total_reach = _safe_sum("reach")
+    total_impressions = _safe_sum("impressions")
+    total_plays = _safe_sum("plays")
 
-    m1, m2, m3, m4, m5, m6, m7 = st.columns(7)
+    # 인사이트 데이터가 하나라도 있는지 체크
+    has_insights = any(
+        p.get("insights", {}).get("impressions") is not None
+        for p in posts if "_errors" not in p.get("insights", {})
+    )
+
+    na = "–"  # 인사이트 없을 때 표시
+    m1, m2, m3, m4, m5, m6 = st.columns(6)
     m1.metric("❤️ 좋아요", f"{total_likes:,}")
     m2.metric("💬 댓글", f"{total_comments:,}")
-    m3.metric("📌 저장", f"{total_saves:,}")
-    m4.metric("🔄 공유", f"{total_shares:,}")
-    m5.metric("▶️ 조회", f"{total_plays:,}")
-    m6.metric("👁️ 도달", f"{total_reach:,}")
-    m7.metric("📊 노출", f"{total_impressions:,}")
+    m3.metric("📌 저장", f"{total_saves:,}" if has_insights else na)
+    m4.metric("▶️ 조회", f"{total_plays:,}" if has_insights else na)
+    m5.metric("👁️ 도달", f"{total_reach:,}" if has_insights else na)
+    m6.metric("📊 노출", f"{total_impressions:,}" if has_insights else na)
 
     st.divider()
 
@@ -374,17 +396,17 @@ def render_insights_page(account):
 
                 likes = post.get("like_count", 0)
                 comments = post.get("comments_count", 0)
-                ins = post.get("insights", {})
-                saves = ins.get("saved", "-")
-                shares = ins.get("shares", "-")
-                reach = ins.get("reach", "-")
+                ins = {k: v for k, v in post.get("insights", {}).items()
+                       if k != "_errors"}
+                saves = ins.get("saved", "–")
+                reach = ins.get("reach", "–")
                 plays = ins.get("plays", None)
 
-                line1 = f"❤️ **{likes}**  💬 **{comments}**  📌 **{saves}**  🔄 **{shares}**"
+                line1 = f"❤️ **{likes}**  💬 **{comments}**  📌 **{saves}**"
                 if plays is not None:
                     line1 += f"  ▶️ **{plays:,}**"
                 st.markdown(line1)
-                st.caption(f"👁️ 도달 {reach}  ·  📊 노출 {ins.get('impressions', '-')}")
+                st.caption(f"👁️ 도달 {reach}  ·  📊 노출 {ins.get('impressions', '–')}")
 
                 caption = post.get("caption") or ""
                 if caption:
@@ -400,7 +422,7 @@ def render_insights_page(account):
 
     rows = []
     for post in posts:
-        ins = post.get("insights", {})
+        ins = {k: v for k, v in post.get("insights", {}).items() if k != "_errors"}
         is_reels = post.get("media_product_type") == "REELS"
         rows.append({
             "날짜": post.get("timestamp", "")[:10],
@@ -408,7 +430,6 @@ def render_insights_page(account):
             "좋아요": post.get("like_count", 0),
             "댓글": post.get("comments_count", 0),
             "저장": ins.get("saved", ""),
-            "공유": ins.get("shares", ""),
             "조회수": ins.get("plays", ""),
             "도달": ins.get("reach", ""),
             "노출": ins.get("impressions", ""),

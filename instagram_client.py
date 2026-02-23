@@ -215,15 +215,15 @@ class InstagramClient:
         url = f"{self.base_url}/{media_id}/insights"
 
         # 기본 지표
-        metrics = ["impressions", "reach", "saved", "shares"]
+        metrics = ["impressions", "reach", "saved"]
 
         # 동영상/릴스는 plays(조회수) 추가
         if media_type in ("VIDEO", "REEL"):
             metrics.append("plays")
 
-        result = {}
+        result = {"_errors": []}
 
-        # 일부 지표가 지원되지 않을 수 있으므로 개별 시도
+        # 1차: 전체 메트릭 한 번에 시도
         try:
             params = {
                 "metric": ",".join(metrics),
@@ -234,11 +234,16 @@ class InstagramClient:
             data = resp.json().get("data", [])
             for item in data:
                 result[item["name"]] = item["values"][0]["value"]
-        except Exception:
-            # 전체 실패 시 기본 지표만 재시도
+            result.pop("_errors", None)
+            return result
+        except Exception as e:
+            result["_errors"].append(f"일괄조회 실패: {e}")
+
+        # 2차: 개별 메트릭 하나씩 시도
+        for metric in metrics:
             try:
                 params = {
-                    "metric": "impressions,reach,saved",
+                    "metric": metric,
                     "access_token": self.access_token,
                 }
                 resp = requests.get(url, params=params)
@@ -246,7 +251,9 @@ class InstagramClient:
                 data = resp.json().get("data", [])
                 for item in data:
                     result[item["name"]] = item["values"][0]["value"]
-            except Exception:
-                pass
+            except Exception as e:
+                result["_errors"].append(f"{metric}: {e}")
 
+        if not result["_errors"]:
+            result.pop("_errors", None)
         return result
