@@ -26,7 +26,7 @@ class InstagramClient:
                     f"Instagram API 에러 [{resp.status_code}]: {msg} (code={code}, subcode={subcode})"
                 )
             except (ValueError, KeyError):
-                self._check_response(resp)
+                resp.raise_for_status()
 
     def _create_child_container(self, image_url):
         """Step 1: 개별 캐러셀 아이템 컨테이너를 생성합니다."""
