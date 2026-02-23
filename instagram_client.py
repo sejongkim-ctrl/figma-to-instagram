@@ -199,10 +199,10 @@ class InstagramClient:
         return resp.json()
 
     def get_media_list(self, limit=25):
-        """최근 게시물 목록을 조회합니다."""
+        """최근 게시물 목록을 조회합니다 (릴스/동영상 포함)."""
         url = f"{self.base_url}/{self.user_id}/media"
         params = {
-            "fields": "id,caption,media_type,media_url,thumbnail_url,timestamp,like_count,comments_count,permalink",
+            "fields": "id,caption,media_type,media_url,thumbnail_url,timestamp,like_count,comments_count,permalink,media_product_type",
             "limit": limit,
             "access_token": self.access_token,
         }
@@ -210,17 +210,43 @@ class InstagramClient:
         self._check_response(resp)
         return resp.json()
 
-    def get_media_insights(self, media_id):
-        """게시물의 인사이트(도달, 노출, 저장) 데이터를 조회합니다."""
+    def get_media_insights(self, media_id, media_type="IMAGE"):
+        """게시물의 인사이트 데이터를 조회합니다. 미디어 타입별로 사용 가능한 지표가 다릅니다."""
         url = f"{self.base_url}/{media_id}/insights"
-        params = {
-            "metric": "impressions,reach,saved",
-            "access_token": self.access_token,
-        }
+
+        # 기본 지표
+        metrics = ["impressions", "reach", "saved", "shares"]
+
+        # 동영상/릴스는 plays(조회수) 추가
+        if media_type in ("VIDEO", "REEL"):
+            metrics.append("plays")
+
+        result = {}
+
+        # 일부 지표가 지원되지 않을 수 있으므로 개별 시도
         try:
+            params = {
+                "metric": ",".join(metrics),
+                "access_token": self.access_token,
+            }
             resp = requests.get(url, params=params)
             self._check_response(resp)
             data = resp.json().get("data", [])
-            return {item["name"]: item["values"][0]["value"] for item in data}
+            for item in data:
+                result[item["name"]] = item["values"][0]["value"]
         except Exception:
-            return {}
+            # 전체 실패 시 기본 지표만 재시도
+            try:
+                params = {
+                    "metric": "impressions,reach,saved",
+                    "access_token": self.access_token,
+                }
+                resp = requests.get(url, params=params)
+                self._check_response(resp)
+                data = resp.json().get("data", [])
+                for item in data:
+                    result[item["name"]] = item["values"][0]["value"]
+            except Exception:
+                pass
+
+        return result

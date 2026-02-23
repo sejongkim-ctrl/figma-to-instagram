@@ -301,7 +301,12 @@ def render_insights_page(account):
         progress = st.progress(0, text="인사이트 데이터 수집 중...")
         for i, post in enumerate(posts):
             try:
-                post["insights"] = ig.get_media_insights(post["id"])
+                mtype = post.get("media_type", "IMAGE")
+                # 릴스 판별: media_product_type이 REELS이면 릴스
+                if post.get("media_product_type") == "REELS":
+                    mtype = "REEL"
+                post["_resolved_type"] = mtype
+                post["insights"] = ig.get_media_insights(post["id"], media_type=mtype)
             except Exception:
                 post["insights"] = {}
             progress.progress((i + 1) / len(posts))
@@ -319,15 +324,19 @@ def render_insights_page(account):
     total_likes = sum(p.get("like_count", 0) for p in posts)
     total_comments = sum(p.get("comments_count", 0) for p in posts)
     total_saves = sum(p.get("insights", {}).get("saved", 0) for p in posts)
+    total_shares = sum(p.get("insights", {}).get("shares", 0) for p in posts)
     total_reach = sum(p.get("insights", {}).get("reach", 0) for p in posts)
     total_impressions = sum(p.get("insights", {}).get("impressions", 0) for p in posts)
+    total_plays = sum(p.get("insights", {}).get("plays", 0) for p in posts)
 
-    m1, m2, m3, m4, m5 = st.columns(5)
+    m1, m2, m3, m4, m5, m6, m7 = st.columns(7)
     m1.metric("❤️ 좋아요", f"{total_likes:,}")
     m2.metric("💬 댓글", f"{total_comments:,}")
     m3.metric("📌 저장", f"{total_saves:,}")
-    m4.metric("👁️ 도달", f"{total_reach:,}")
-    m5.metric("📊 노출", f"{total_impressions:,}")
+    m4.metric("🔄 공유", f"{total_shares:,}")
+    m5.metric("▶️ 조회", f"{total_plays:,}")
+    m6.metric("👁️ 도달", f"{total_reach:,}")
+    m7.metric("📊 노출", f"{total_impressions:,}")
 
     st.divider()
 
@@ -339,7 +348,15 @@ def render_insights_page(account):
         cols = st.columns(3)
         for col, post in zip(cols, row_posts):
             with col:
-                media_url = post.get("media_url") or post.get("thumbnail_url")
+                # 릴스/동영상은 thumbnail_url 우선, 이미지는 media_url 우선
+                is_video = post.get("media_type") == "VIDEO"
+                is_reels = post.get("media_product_type") == "REELS"
+
+                if is_video or is_reels:
+                    media_url = post.get("thumbnail_url") or post.get("media_url")
+                else:
+                    media_url = post.get("media_url") or post.get("thumbnail_url")
+
                 if media_url:
                     try:
                         st.image(media_url, use_container_width=True)
@@ -349,20 +366,25 @@ def render_insights_page(account):
                     st.info("🖼️ 썸네일 없음")
 
                 ts = post.get("timestamp", "")[:10]
-                mtype = type_label.get(post.get("media_type", ""), "기타")
+                if is_reels:
+                    mtype = "🎬 릴스"
+                else:
+                    mtype = type_label.get(post.get("media_type", ""), "기타")
                 st.caption(f"{ts} · {mtype}")
 
                 likes = post.get("like_count", 0)
                 comments = post.get("comments_count", 0)
                 ins = post.get("insights", {})
                 saves = ins.get("saved", "-")
+                shares = ins.get("shares", "-")
                 reach = ins.get("reach", "-")
-                impressions = ins.get("impressions", "-")
+                plays = ins.get("plays", None)
 
-                st.markdown(
-                    f"❤️ **{likes}**  💬 **{comments}**  📌 **{saves}**  "
-                    f"👁️ **{reach}**  📊 **{impressions}**"
-                )
+                line1 = f"❤️ **{likes}**  💬 **{comments}**  📌 **{saves}**  🔄 **{shares}**"
+                if plays is not None:
+                    line1 += f"  ▶️ **{plays:,}**"
+                st.markdown(line1)
+                st.caption(f"👁️ 도달 {reach}  ·  📊 노출 {ins.get('impressions', '-')}")
 
                 caption = post.get("caption") or ""
                 if caption:
@@ -379,12 +401,15 @@ def render_insights_page(account):
     rows = []
     for post in posts:
         ins = post.get("insights", {})
+        is_reels = post.get("media_product_type") == "REELS"
         rows.append({
             "날짜": post.get("timestamp", "")[:10],
-            "타입": post.get("media_type", ""),
+            "타입": "릴스" if is_reels else {"IMAGE": "이미지", "VIDEO": "동영상", "CAROUSEL_ALBUM": "캐러셀"}.get(post.get("media_type", ""), "기타"),
             "좋아요": post.get("like_count", 0),
             "댓글": post.get("comments_count", 0),
             "저장": ins.get("saved", ""),
+            "공유": ins.get("shares", ""),
+            "조회수": ins.get("plays", ""),
             "도달": ins.get("reach", ""),
             "노출": ins.get("impressions", ""),
             "캡션": (post.get("caption") or "")[:100],
