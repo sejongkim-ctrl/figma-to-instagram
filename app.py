@@ -27,6 +27,7 @@ from card_news import CardNewsRenderer, TEMPLATES
 from figma_client import FigmaClient
 from image_host import ImageHost
 from instagram_client import InstagramClient
+from pencil_client import PencilClient
 from token_manager import TokenManager
 
 ACCOUNTS_FILE = os.path.join(os.path.dirname(__file__), "accounts.json")
@@ -526,6 +527,12 @@ with st.sidebar:
         help="Figma URL에서 /file/ 뒤의 문자열",
     )
 
+    pencil_gist_id = st.text_input(
+        "Pencil Gist ID",
+        value=os.getenv("PENCIL_GIST_ID", ""),
+        help="cardupload 스크립트가 생성한 GitHub Gist ID",
+    )
+
     # Slack 설정 표시
     slack_url = get_slack_webhook()
     if slack_url:
@@ -717,16 +724,12 @@ if "upload_counter" not in st.session_state:
     st.session_state.upload_counter = 0
 if "url_counter" not in st.session_state:
     st.session_state.url_counter = 0
-if "cardnews_series" not in st.session_state:
-    st.session_state.cardnews_series = {}
-if "cardnews_slides" not in st.session_state:
-    st.session_state.cardnews_slides = []
-if "cardnews_preview" not in st.session_state:
-    st.session_state.cardnews_preview = None
+if "pencil_series" not in st.session_state:
+    st.session_state.pencil_series = {}
+if "pencil_manifest" not in st.session_state:
+    st.session_state.pencil_manifest = None
 
-tab_figma, tab_upload, tab_url, tab_cardnews = st.tabs(
-    ["📐 Figma", "📷 이미지 업로드", "🔗 URL 입력", "✏️ 카드뉴스 만들기"]
-)
+tab_figma, tab_pencil, tab_upload, tab_url = st.tabs(["📐 Figma", "✏️ Pencil.dev", "📷 이미지 업로드", "🔗 URL 입력"])
 
 figma_selected = {}  # Figma 탭에서 선택된 항목
 
@@ -785,7 +788,65 @@ with tab_figma:
                     if len(selected_frames) >= 1:
                         figma_selected[grp] = [f["id"] for f in selected_frames]
 
-# ── Tab 2: 이미지 업로드 ──
+# ── Tab 2: Pencil.dev ──
+with tab_pencil:
+    col_load, col_info = st.columns([1, 3])
+    with col_load:
+        if st.button("🔄 Pencil.dev 읽어오기", use_container_width=True):
+            gist_id = pencil_gist_id.strip().rstrip("/").split("/")[-1] if pencil_gist_id.strip() else ""
+            if not gist_id:
+                st.error("사이드바에서 Pencil Gist ID를 먼저 설정해주세요.")
+            else:
+                with st.spinner("Pencil.dev에서 콘텐츠를 가져오는 중..."):
+                    try:
+                        pencil = PencilClient()
+                        series_list = pencil.get_series(gist_id)
+                        st.session_state.pencil_manifest = series_list
+                    except Exception as e:
+                        st.error(f"불러오기 실패: {e}")
+
+    with col_info:
+        if st.session_state.pencil_manifest:
+            st.caption(
+                f"총 {len(st.session_state.pencil_manifest)}개 이미지셋"
+            )
+
+    if st.session_state.pencil_manifest:
+        series_list = st.session_state.pencil_manifest
+
+        selected_pencil = st.multiselect(
+            "이미지셋 선택 (여러 개 선택 가능, 최신순)",
+            [s["name"] for s in series_list],
+            format_func=lambda x: f"{x} ({next(s['count'] for s in series_list if s['name'] == x)}장)",
+        )
+
+        if selected_pencil:
+            st.info(f"✅ {len(selected_pencil)}개 이미지셋 선택됨")
+
+            for sname in selected_pencil:
+                sdata = next(s for s in series_list if s["name"] == sname)
+                images = sdata.get("images", [])
+                with st.expander(f"📁 {sname} ({len(images)}장)", expanded=True):
+                    selected_images = []
+                    cols = st.columns(min(len(images), 5))
+                    for i, img in enumerate(images):
+                        with cols[i % 5]:
+                            checked = st.checkbox(
+                                img["name"],
+                                value=True,
+                                key=f"pencil_{sname}_{i}",
+                            )
+                            try:
+                                st.image(img["url"], use_container_width=True)
+                            except Exception:
+                                st.caption(f"{i+1}. {img['name']}")
+                            if checked:
+                                selected_images.append(img)
+                    st.caption(f"{len(selected_images)}장 선택" + (" (단일 이미지)" if len(selected_images) == 1 else ""))
+                    if selected_images:
+                        st.session_state.pencil_series[sname] = [img["url"] for img in selected_images]
+
+# ── Tab 3: 이미지 업로드 ──
 with tab_upload:
     st.caption("PC에서 이미지 파일을 직접 올려서 Instagram에 발행합니다.")
 
@@ -1099,6 +1160,10 @@ for grp, node_ids in figma_selected.items():
 # 업로드 항목
 for sname, sfiles in st.session_state.upload_series.items():
     all_selected[f"📷 {sname}"] = {"source": "upload", "files": sfiles, "count": len(sfiles)}
+
+# Pencil.dev 항목
+for sname, surls in st.session_state.pencil_series.items():
+    all_selected[f"✏️ {sname}"] = {"source": "url", "urls": surls, "count": len(surls)}
 
 # URL 항목
 for sname, surls in st.session_state.url_series.items():
