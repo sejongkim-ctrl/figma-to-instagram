@@ -1,99 +1,65 @@
-"""카드뉴스 이미지 생성기 (Pillow 기반) — Premium Design v2."""
+"""카드뉴스 이미지 생성기 — v4 Photo-based design."""
 import io
-import math
 import os
 
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 # ── 템플릿 정의 ───────────────────────────────────────────
 
 TEMPLATES = {
     "깔끔한 화이트": {
-        "bg": "#F5F5F7",
+        "overlay_color": (0, 0, 0),
+        "overlay_alpha": 0.45,
+        "text_white": True,
         "card_bg": "#FFFFFF",
-        "title_color": "#1A1A1A",
-        "body_color": "#444444",
-        "accent": "#4A90D9",
-        "accent2": "#2E6AB8",
-        "muted": "#AAAAAA",
-        "cover_bg1": "#4A90D9",
-        "cover_bg2": "#2E6AB8",
-        "cover_text": "#FFFFFF",
-        "cover_sub": "#D0E4FF",
-        "closing_bg1": "#4A90D9",
-        "closing_bg2": "#2E6AB8",
-        "closing_text": "#FFFFFF",
-        "number_bg": "#4A90D9",
-        "number_text": "#FFFFFF",
-        "bullet": "#4A90D9",
-        "divider": "#E8E8E8",
+        "accent": "#3D7DD9",
+        "heading_text": "#1A1A1A",
+        "body_text": "#333333",
+        "muted": "#999999",
+        "item_bg": "#F2F7FF",
+        "item_border": "#3D7DD9",
     },
     "다크 프리미엄": {
-        "bg": "#0F0F1A",
+        "overlay_color": (10, 10, 20),
+        "overlay_alpha": 0.55,
+        "text_white": True,
         "card_bg": "#1A1A2E",
-        "title_color": "#FFFFFF",
-        "body_color": "#CCCCDD",
         "accent": "#E94560",
-        "accent2": "#C62A42",
-        "muted": "#555570",
-        "cover_bg1": "#16213E",
-        "cover_bg2": "#0F0F1A",
-        "cover_text": "#FFFFFF",
-        "cover_sub": "#A0B4D0",
-        "closing_bg1": "#E94560",
-        "closing_bg2": "#C62A42",
-        "closing_text": "#FFFFFF",
-        "number_bg": "#E94560",
-        "number_text": "#FFFFFF",
-        "bullet": "#E94560",
-        "divider": "#2A2A40",
+        "heading_text": "#FFFFFF",
+        "body_text": "#E0E0F0",
+        "muted": "#666680",
+        "item_bg": "#22223A",
+        "item_border": "#E94560",
     },
     "수壽 브랜드": {
-        "bg": "#F7F0E8",
-        "card_bg": "#FFFFFF",
-        "title_color": "#2D1810",
-        "body_color": "#4A3728",
+        "overlay_color": (30, 15, 5),
+        "overlay_alpha": 0.50,
+        "text_white": True,
+        "card_bg": "#FFFBF5",
         "accent": "#C4956A",
-        "accent2": "#A67B52",
+        "heading_text": "#2D1810",
+        "body_text": "#4A3728",
         "muted": "#B0A090",
-        "cover_bg1": "#2D1810",
-        "cover_bg2": "#1A0E08",
-        "cover_text": "#FFF8F0",
-        "cover_sub": "#D4B896",
-        "closing_bg1": "#C4956A",
-        "closing_bg2": "#A67B52",
-        "closing_text": "#FFFFFF",
-        "number_bg": "#C4956A",
-        "number_text": "#FFFFFF",
-        "bullet": "#C4956A",
-        "divider": "#E8DDD0",
+        "item_bg": "#F5EDE3",
+        "item_border": "#C4956A",
     },
     "건강 그린": {
-        "bg": "#ECF5F0",
+        "overlay_color": (10, 30, 20),
+        "overlay_alpha": 0.50,
+        "text_white": True,
         "card_bg": "#FFFFFF",
-        "title_color": "#1B4332",
-        "body_color": "#2D6A4F",
         "accent": "#40916C",
-        "accent2": "#2D6A4F",
+        "heading_text": "#1B4332",
+        "body_text": "#2D5A42",
         "muted": "#88B0A0",
-        "cover_bg1": "#1B4332",
-        "cover_bg2": "#0D2818",
-        "cover_text": "#FFFFFF",
-        "cover_sub": "#95D5B2",
-        "closing_bg1": "#40916C",
-        "closing_bg2": "#2D6A4F",
-        "closing_text": "#FFFFFF",
-        "number_bg": "#40916C",
-        "number_text": "#FFFFFF",
-        "bullet": "#40916C",
-        "divider": "#D0E8DD",
+        "item_bg": "#E8F5EE",
+        "item_border": "#40916C",
     },
 }
 
-# ── 폰트 로딩 ─────────────────────────────────────────────
+# ── 폰트 ──────────────────────────────────────────────────
 
 _FONT_DIR = os.path.join(os.path.dirname(__file__), "fonts")
-
 _FONT_PATHS = {
     "bold": [
         os.path.expanduser("~/Library/Fonts/Pretendard-Bold.otf"),
@@ -121,7 +87,6 @@ _FONT_PATHS = {
         os.path.expanduser("~/Library/Fonts/Pretendard-SemiBold.otf"),
     ],
 }
-
 _font_cache = {}
 
 
@@ -145,571 +110,451 @@ def _load_font(role, size):
 # ── 유틸리티 ──────────────────────────────────────────────
 
 
-def _hex(color):
-    """Hex 컬러를 RGB 튜플로 변환."""
-    c = color.lstrip("#")
+def _hex(c):
+    c = c.lstrip("#")
     return tuple(int(c[i : i + 2], 16) for i in (0, 2, 4))
 
 
-def _hex_alpha(color, alpha):
-    """Hex 컬러를 RGBA 튜플로 변환."""
-    c = color.lstrip("#")
-    return tuple(int(c[i : i + 2], 16) for i in (0, 2, 4)) + (alpha,)
-
-
-def _lerp_color(c1_hex, c2_hex, t):
-    """두 색상 사이 보간. t=0이면 c1, t=1이면 c2."""
-    r1, g1, b1 = _hex(c1_hex)
-    r2, g2, b2 = _hex(c2_hex)
-    return (
-        int(r1 + (r2 - r1) * t),
-        int(g1 + (g2 - g1) * t),
-        int(b1 + (b2 - b1) * t),
-    )
-
-
-def _draw_gradient(img, color1_hex, color2_hex, direction="vertical"):
-    """이미지에 그라디언트 배경 그리기."""
-    draw = ImageDraw.Draw(img)
-    w, h = img.size
-    if direction == "vertical":
-        for y in range(h):
-            t = y / max(h - 1, 1)
-            color = _lerp_color(color1_hex, color2_hex, t)
-            draw.line([(0, y), (w, y)], fill=color)
+def _fit_cover(photo, w, h):
+    """사진을 w×h 크기에 꽉 차게 crop + resize (cover fit)."""
+    pw, ph = photo.size
+    target_ratio = w / h
+    photo_ratio = pw / ph
+    if photo_ratio > target_ratio:
+        new_h = ph
+        new_w = int(ph * target_ratio)
+        left = (pw - new_w) // 2
+        photo = photo.crop((left, 0, left + new_w, ph))
     else:
-        for x in range(w):
-            t = x / max(w - 1, 1)
-            color = _lerp_color(color1_hex, color2_hex, t)
-            draw.line([(x, 0), (x, h)], fill=color)
+        new_w = pw
+        new_h = int(pw / target_ratio)
+        top = (ph - new_h) // 2
+        photo = photo.crop((0, top, pw, top + new_h))
+    return photo.resize((w, h), Image.LANCZOS)
 
 
-def _draw_rounded_rect(draw, xy, fill, radius=20):
-    """둥근 모서리 사각형 그리기."""
-    x1, y1, x2, y2 = xy
-    # 4개 원 + 중앙 사각형
-    draw.rounded_rectangle([x1, y1, x2, y2], radius=radius, fill=fill)
+def _gradient_overlay(img, color, alpha_top, alpha_bottom):
+    """상단→하단 그라디언트 오버레이."""
+    overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
+    draw = ImageDraw.Draw(overlay)
+    w, h = img.size
+    r, g, b = color
+    for y in range(h):
+        t = y / max(h - 1, 1)
+        a = int(alpha_top + (alpha_bottom - alpha_top) * t)
+        draw.line([(0, y), (w, y)], fill=(r, g, b, a))
+    return Image.alpha_composite(img.convert("RGBA"), overlay).convert("RGB")
 
 
-def _draw_circle(draw, center, radius, fill):
-    """원 그리기."""
-    cx, cy = center
-    draw.ellipse(
-        [cx - radius, cy - radius, cx + radius, cy + radius],
-        fill=fill,
-    )
+def _solid_overlay(img, color, alpha):
+    """단색 반투명 오버레이."""
+    overlay = Image.new("RGBA", img.size, color + (int(alpha * 255),))
+    return Image.alpha_composite(img.convert("RGBA"), overlay).convert("RGB")
+
+
+def _open_image(source):
+    """bytes 또는 PIL Image를 PIL Image로 변환."""
+    if source is None:
+        return None
+    if isinstance(source, Image.Image):
+        return source.convert("RGB")
+    if isinstance(source, (bytes, bytearray)):
+        return Image.open(io.BytesIO(source)).convert("RGB")
+    return None
 
 
 # ── 렌더러 ────────────────────────────────────────────────
 
 
 class CardNewsRenderer:
-    """Pillow 기반 카드뉴스 이미지 생성기 — Premium Design."""
+    """사진 배경 기반 카드뉴스 생성기."""
 
     def __init__(self, template_name, size=(1080, 1080)):
         if template_name not in TEMPLATES:
             raise ValueError(f"알 수 없는 템플릿: {template_name}")
         self.t = TEMPLATES[template_name]
         self.w, self.h = size
-        self.pad = 80
 
-    def _new_image(self, bg_hex):
-        return Image.new("RGB", (self.w, self.h), _hex(bg_hex))
-
-    def _new_gradient_image(self, color1_hex, color2_hex):
-        img = Image.new("RGB", (self.w, self.h))
-        _draw_gradient(img, color1_hex, color2_hex)
-        return img
-
-    def _wrap_text(self, draw, text, font, max_width):
-        """텍스트를 max_width에 맞게 줄바꿈 (한글 글자 단위 지원)."""
+    def _wrap(self, draw, text, font, max_w):
         lines = []
-        for paragraph in text.split("\n"):
-            if not paragraph.strip():
+        for para in text.split("\n"):
+            if not para.strip():
                 lines.append("")
                 continue
-            # 한글은 단어 경계가 없으므로 글자 단위로도 줄바꿈
-            words = paragraph.split()
+            words = para.split()
             if not words:
                 lines.append("")
                 continue
-            current = words[0]
-            for word in words[1:]:
-                test = current + " " + word
-                bbox = draw.textbbox((0, 0), test, font=font)
-                if bbox[2] - bbox[0] <= max_width:
-                    current = test
+            cur = words[0]
+            for w in words[1:]:
+                test = cur + " " + w
+                if draw.textbbox((0, 0), test, font=font)[2] <= max_w:
+                    cur = test
                 else:
-                    # 현재 단어가 너무 길면 글자 단위로 자르기
-                    lines.append(current)
-                    current = word
-            lines.append(current)
+                    lines.append(cur)
+                    cur = w
+            lines.append(cur)
         return lines
 
-    def _text_height(self, draw, text, font):
-        bbox = draw.textbbox((0, 0), text, font=font)
-        return bbox[3] - bbox[1]
+    def _tw(self, d, t, f):
+        b = d.textbbox((0, 0), t, font=f)
+        return b[2] - b[0]
 
-    def _text_width(self, draw, text, font):
-        bbox = draw.textbbox((0, 0), text, font=font)
-        return bbox[2] - bbox[0]
+    def _th(self, d, t, f):
+        b = d.textbbox((0, 0), t, font=f)
+        return b[3] - b[1]
 
     def _to_bytes(self, img):
         buf = io.BytesIO()
         img.save(buf, format="PNG", optimize=True)
         return buf.getvalue()
 
-    # ── 장식 요소 ──
+    def _draw_text_shadow(self, draw, xy, text, font, fill, shadow_color=(0, 0, 0), offset=2):
+        """텍스트에 그림자 효과."""
+        x, y = xy
+        # 그림자
+        draw.text((x + offset, y + offset), text, font=font, fill=shadow_color)
+        # 본문
+        draw.text((x, y), text, font=font, fill=fill)
 
-    def _draw_decorative_circles(self, img, color_hex, alpha=30):
-        """배경에 장식용 반투명 원 그리기."""
-        overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
-        od = ImageDraw.Draw(overlay)
-        r, g, b = _hex(color_hex)
+    # ── 표지: 전체 사진 배경 + 그라디언트 오버레이 + 텍스트 ──
 
-        # 큰 원 (우상단)
-        _draw_circle(od, (self.w + 60, -60), 280, (r, g, b, alpha))
-        # 작은 원 (좌하단)
-        _draw_circle(od, (-40, self.h + 40), 200, (r, g, b, alpha))
-        # 중간 원 (우하단)
-        _draw_circle(od, (self.w - 100, self.h - 120), 140, (r, g, b, int(alpha * 0.6)))
+    def render_cover(self, title, subtitle="", bg_image=None):
+        photo = _open_image(bg_image)
 
-        img_rgba = img.convert("RGBA")
-        img_rgba = Image.alpha_composite(img_rgba, overlay)
-        return img_rgba.convert("RGB")
-
-    def _draw_dot_pattern(self, img, color_hex, alpha=15, spacing=60):
-        """배경에 도트 패턴 그리기."""
-        overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
-        od = ImageDraw.Draw(overlay)
-        r, g, b = _hex(color_hex)
-
-        for x in range(spacing // 2, self.w, spacing):
-            for y in range(spacing // 2, self.h, spacing):
-                _draw_circle(od, (x, y), 2, (r, g, b, alpha))
-
-        img_rgba = img.convert("RGBA")
-        img_rgba = Image.alpha_composite(img_rgba, overlay)
-        return img_rgba.convert("RGB")
-
-    # ── 표지 슬라이드 ──
-
-    def render_cover(self, title, subtitle=""):
-        img = self._new_gradient_image(self.t["cover_bg1"], self.t["cover_bg2"])
-
-        # 장식 원
-        img = self._draw_decorative_circles(img, self.t["cover_sub"], alpha=25)
+        if photo:
+            img = _fit_cover(photo, self.w, self.h)
+            # 상단 살짝 어둡게 + 하단 많이 어둡게 (텍스트 가독성)
+            oc = self.t["overlay_color"]
+            img = _gradient_overlay(img, oc, 40, 200)
+        else:
+            # 사진 없으면 단색 그라디언트 폴백
+            img = Image.new("RGB", (self.w, self.h), _hex("#1A1A2E"))
+            draw_tmp = ImageDraw.Draw(img)
+            for y in range(self.h):
+                t = y / max(self.h - 1, 1)
+                r = int(30 + 20 * t)
+                g = int(30 + 20 * t)
+                b = int(50 + 30 * t)
+                draw_tmp.line([(0, y), (self.w, y)], fill=(r, g, b))
 
         draw = ImageDraw.Draw(img)
-        max_w = self.w - self.pad * 2
+        pad = 80
 
-        # 상단 장식 라인
-        line_y = 80
-        line_w = 60
-        draw.rectangle(
-            [(self.w // 2 - line_w // 2, line_y),
-             (self.w // 2 + line_w // 2, line_y + 4)],
-            fill=_hex(self.t["cover_sub"]),
-        )
+        font_t = _load_font("bold", 72)
+        font_s = _load_font("medium", 32)
+        max_w = self.w - pad * 2
 
-        # 제목
-        font_title = _load_font("bold", 68)
-        title_lines = self._wrap_text(draw, title, font_title, max_w - 40)
+        lines_t = self._wrap(draw, title, font_t, max_w)
+        lines_s = self._wrap(draw, subtitle, font_s, max_w) if subtitle else []
+        lh_t = self._th(draw, "가", font_t)
+        lh_s = self._th(draw, "가", font_s) if lines_s else 0
 
-        # 부제
-        font_sub = _load_font("regular", 32)
-        sub_lines = (
-            self._wrap_text(draw, subtitle, font_sub, max_w - 40) if subtitle else []
-        )
+        spacing_t = 16
+        block_t = lh_t * len(lines_t) + spacing_t * max(0, len(lines_t) - 1)
+        block_s = (lh_s * len(lines_s) + 8 * max(0, len(lines_s) - 1)) if lines_s else 0
+        divider_h = 50 if lines_s else 0
+        total = block_t + divider_h + block_s
 
-        # 높이 계산
-        line_spacing_title = 16
-        title_h = sum(
-            self._text_height(draw, ln, font_title) for ln in title_lines
-        ) + max(0, len(title_lines) - 1) * line_spacing_title
+        # 텍스트를 하단 1/3 영역에 배치
+        y = self.h - pad - total - 60
 
-        gap = 60 if sub_lines else 0
-        divider_h = 30 if sub_lines else 0
-
-        sub_h = 0
-        if sub_lines:
-            sub_h = sum(
-                self._text_height(draw, ln, font_sub) for ln in sub_lines
-            ) + max(0, len(sub_lines) - 1) * 8
-
-        total_h = title_h + gap + divider_h + sub_h
-        y = (self.h - total_h) // 2
-
-        # 제목 배경 하이라이트 (반투명 영역)
-        highlight_pad = 30
+        # 반투명 배경 패널
+        panel_pad = 30
         overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
         od = ImageDraw.Draw(overlay)
         od.rounded_rectangle(
-            [self.pad - highlight_pad,
-             y - highlight_pad,
-             self.w - self.pad + highlight_pad,
-             y + title_h + highlight_pad],
-            radius=16,
-            fill=(0, 0, 0, 25),
+            [pad - panel_pad, y - panel_pad,
+             self.w - pad + panel_pad, y + total + panel_pad + 20],
+            radius=20,
+            fill=(0, 0, 0, 60),
         )
-        img_rgba = img.convert("RGBA")
-        img_rgba = Image.alpha_composite(img_rgba, overlay)
-        img = img_rgba.convert("RGB")
+        img = Image.alpha_composite(img.convert("RGBA"), overlay).convert("RGB")
         draw = ImageDraw.Draw(img)
 
-        # 제목 그리기
-        for ln in title_lines:
-            lw = self._text_width(draw, ln, font_title)
-            lh = self._text_height(draw, ln, font_title)
-            draw.text(
-                ((self.w - lw) // 2, y),
-                ln,
-                font=font_title,
-                fill=_hex(self.t["cover_text"]),
+        # 제목
+        white = (255, 255, 255)
+        for ln in lines_t:
+            lw = self._tw(draw, ln, font_t)
+            self._draw_text_shadow(
+                draw, ((self.w - lw) // 2, y), ln, font_t, white,
+                shadow_color=(0, 0, 0), offset=3,
             )
-            y += lh + line_spacing_title
-
-        if sub_lines:
-            y += 16
-
-            # 장식 구분선 (다이아몬드 + 선)
-            cx = self.w // 2
-            line_half = 80
-            diamond_size = 5
-
-            # 왼쪽 선
-            draw.line(
-                [(cx - line_half, y + diamond_size), (cx - diamond_size - 4, y + diamond_size)],
-                fill=_hex(self.t["cover_sub"]),
-                width=1,
-            )
-            # 다이아몬드
-            draw.polygon(
-                [
-                    (cx, y),
-                    (cx + diamond_size, y + diamond_size),
-                    (cx, y + diamond_size * 2),
-                    (cx - diamond_size, y + diamond_size),
-                ],
-                fill=_hex(self.t["cover_sub"]),
-            )
-            # 오른쪽 선
-            draw.line(
-                [(cx + diamond_size + 4, y + diamond_size), (cx + line_half, y + diamond_size)],
-                fill=_hex(self.t["cover_sub"]),
-                width=1,
-            )
-
-            y += diamond_size * 2 + 24
-
-            # 부제 그리기
-            for ln in sub_lines:
-                lw = self._text_width(draw, ln, font_sub)
-                lh = self._text_height(draw, ln, font_sub)
-                draw.text(
-                    ((self.w - lw) // 2, y),
-                    ln,
-                    font=font_sub,
-                    fill=_hex(self.t["cover_sub"]),
-                )
-                y += lh + 8
-
-        # 하단 장식 라인
-        bottom_y = self.h - 80
-        draw.rectangle(
-            [(self.w // 2 - line_w // 2, bottom_y),
-             (self.w // 2 + line_w // 2, bottom_y + 4)],
-            fill=_hex(self.t["cover_sub"]),
-        )
-
-        return self._to_bytes(img)
-
-    # ── 본문 슬라이드 ──
-
-    def render_content(self, heading, body, slide_num=None, total_slides=None):
-        img = self._new_image(self.t["bg"])
-        draw = ImageDraw.Draw(img)
-
-        card_margin = 50
-        card_x1 = card_margin
-        card_y1 = card_margin
-        card_x2 = self.w - card_margin
-        card_y2 = self.h - card_margin
-        card_radius = 24
-
-        # 카드 그림자 (오프셋된 어두운 사각형)
-        shadow_offset = 6
-        shadow_color = _lerp_color(self.t["bg"], "#000000", 0.08)
-        draw.rounded_rectangle(
-            [card_x1 + shadow_offset, card_y1 + shadow_offset,
-             card_x2 + shadow_offset, card_y2 + shadow_offset],
-            radius=card_radius,
-            fill=shadow_color,
-        )
-
-        # 카드 배경
-        draw.rounded_rectangle(
-            [card_x1, card_y1, card_x2, card_y2],
-            radius=card_radius,
-            fill=_hex(self.t["card_bg"]),
-        )
-
-        # 상단 액센트 바 (카드 내부 상단, 둥근 모서리에 맞춤)
-        accent_bar_h = 6
-        # 둥근 상단에 맞추기 위해 clip 영역 사용
-        for ay in range(card_y1, card_y1 + accent_bar_h):
-            draw.line(
-                [(card_x1 + card_radius, ay), (card_x2 - card_radius, ay)],
-                fill=_hex(self.t["accent"]),
-            )
-        # 상단 좌우 곡선 부분의 accent bar
-        draw.rounded_rectangle(
-            [card_x1, card_y1, card_x2, card_y1 + accent_bar_h + card_radius],
-            radius=card_radius,
-            fill=_hex(self.t["accent"]),
-        )
-        # 아래 부분을 카드 색으로 덮기
-        draw.rectangle(
-            [card_x1, card_y1 + accent_bar_h, card_x2, card_y1 + accent_bar_h + card_radius + 2],
-            fill=_hex(self.t["card_bg"]),
-        )
-
-        inner_pad = 50
-        content_x = card_x1 + inner_pad
-        content_max_w = (card_x2 - card_x1) - inner_pad * 2
-
-        y = card_y1 + accent_bar_h + 40
-
-        # 넘버 뱃지
-        if slide_num is not None:
-            badge_radius = 24
-            badge_cx = content_x + badge_radius
-            badge_cy = y + badge_radius
-            _draw_circle(draw, (badge_cx, badge_cy), badge_radius, _hex(self.t["number_bg"]))
-            font_num = _load_font("bold", 26)
-            num_text = str(slide_num)
-            nw = self._text_width(draw, num_text, font_num)
-            nh = self._text_height(draw, num_text, font_num)
-            draw.text(
-                (badge_cx - nw // 2, badge_cy - nh // 2),
-                num_text,
-                font=font_num,
-                fill=_hex(self.t["number_text"]),
-            )
-
-            # 넘버 뱃지 옆에 소제목
-            heading_x = badge_cx + badge_radius + 16
-            heading_max_w = content_max_w - (badge_radius * 2 + 16)
-        else:
-            heading_x = content_x
-            heading_max_w = content_max_w
-
-        # 소제목
-        font_heading = _load_font("bold", 40)
-        heading_lines = self._wrap_text(draw, heading, font_heading, heading_max_w)
-
-        heading_y = y
-        if slide_num is not None:
-            # 소제목을 넘버 뱃지 중앙에 맞춤
-            first_lh = self._text_height(draw, heading_lines[0] if heading_lines else "가", font_heading)
-            heading_y = badge_cy - first_lh // 2
-
-        for ln in heading_lines:
-            lh = self._text_height(draw, ln, font_heading)
-            draw.text(
-                (heading_x, heading_y),
-                ln,
-                font=font_heading,
-                fill=_hex(self.t["title_color"]),
-            )
-            heading_y += lh + 10
-
-        y = max(heading_y, y + (badge_radius * 2 if slide_num else 0)) + 24
+            y += lh_t + spacing_t
 
         # 구분선
-        draw.line(
-            [(content_x, y), (content_x + content_max_w, y)],
-            fill=_hex(self.t["divider"]),
-            width=1,
-        )
-        y += 24
+        if lines_s:
+            y += 8
+            cx = self.w // 2
+            sub_c = (255, 255, 255, 120)
+            # 액센트 라인
+            accent_c = _hex(self.t["accent"])
+            draw.line([(cx - 60, y), (cx + 60, y)], fill=accent_c, width=3)
+            y += 22
 
-        # 본문
-        font_body = _load_font("regular", 28)
-        body_text = body.strip()
-        body_paragraphs = body_text.split("\n")
-
-        bullet_r = 4
-        bullet_indent = 20
-        text_after_bullet = bullet_indent + 16
-
-        for para in body_paragraphs:
-            para = para.strip()
-            if not para:
-                y += 14
-                continue
-
-            # 불렛 포인트 감지 (-, •, ·, 숫자.)
-            is_bullet = False
-            display_text = para
-            if para.startswith(("-", "•", "·")):
-                is_bullet = True
-                display_text = para[1:].strip()
-            elif len(para) > 2 and para[0].isdigit() and para[1] in (".", ")"):
-                is_bullet = True
-                display_text = para
-
-            wrapped = self._wrap_text(draw, display_text, font_body, content_max_w - text_after_bullet if is_bullet else content_max_w)
-
-            for j, ln in enumerate(wrapped):
-                lh = self._text_height(draw, ln, font_body)
-                if y + lh > card_y2 - inner_pad - 40:
-                    draw.text(
-                        (content_x + (text_after_bullet if is_bullet else 0), y),
-                        "...",
-                        font=font_body,
-                        fill=_hex(self.t["muted"]),
-                    )
-                    y = card_y2  # 강제 종료
-                    break
-
-                if is_bullet and j == 0:
-                    # 불렛 원
-                    _draw_circle(
-                        draw,
-                        (content_x + bullet_indent, y + lh // 2),
-                        bullet_r,
-                        _hex(self.t["bullet"]),
-                    )
+            for ln in lines_s:
+                lw = self._tw(draw, ln, font_s)
                 draw.text(
-                    (content_x + (text_after_bullet if is_bullet else 0), y),
-                    ln,
-                    font=font_body,
-                    fill=_hex(self.t["body_color"]),
+                    ((self.w - lw) // 2, y), ln,
+                    font=font_s, fill=(220, 220, 220),
                 )
-                y += lh + 10
-            if y >= card_y2:
+                y += lh_s + 8
+
+        return self._to_bytes(img)
+
+    # ── 본문: 상단 사진 + 하단 텍스트 카드 ──
+
+    def render_content(self, heading, body, slide_num=None, total_slides=None, bg_image=None):
+        photo = _open_image(bg_image)
+
+        img = Image.new("RGB", (self.w, self.h), _hex(self.t["card_bg"]))
+        draw = ImageDraw.Draw(img)
+
+        # 사진 영역 비율 (사진 있으면 상단 38%, 없으면 헤딩 바만)
+        if photo:
+            photo_h = int(self.h * 0.38)
+            photo_img = _fit_cover(photo, self.w, photo_h)
+            # 사진 하단에 그라디언트 페이드
+            oc = self.t["overlay_color"]
+            photo_img = _gradient_overlay(photo_img, oc, 0, 160)
+            img.paste(photo_img, (0, 0))
+
+            # 사진 위에 소제목 오버레이
+            draw = ImageDraw.Draw(img)
+            font_h = _load_font("bold", 42)
+            h_lines = self._wrap(draw, heading.strip(), font_h, self.w - 140)
+            lh_h = self._th(draw, "가", font_h)
+
+            # 넘버 뱃지
+            badge_x = 70
+            badge_y = photo_h - 70
+            if slide_num is not None:
+                # 액센트 컬러 뱃지
+                accent = _hex(self.t["accent"])
+                draw.ellipse(
+                    [badge_x - 24, badge_y - 24, badge_x + 24, badge_y + 24],
+                    fill=accent,
+                )
+                font_n = _load_font("bold", 26)
+                nt = str(slide_num)
+                draw.text(
+                    (badge_x - self._tw(draw, nt, font_n) // 2,
+                     badge_y - self._th(draw, nt, font_n) // 2),
+                    nt, font=font_n, fill=(255, 255, 255),
+                )
+                text_x = badge_x + 40
+            else:
+                text_x = 70
+
+            # 소제목 (사진 하단에 흰색)
+            h_y = badge_y - lh_h // 2
+            for ln in h_lines:
+                self._draw_text_shadow(
+                    draw, (text_x, h_y), ln, font_h, (255, 255, 255),
+                    shadow_color=(0, 0, 0), offset=2,
+                )
+                h_y += lh_h + 8
+                text_x = 70  # 두 번째 줄부터는 왼쪽 정렬
+
+            text_area_top = photo_h + 10
+        else:
+            # 사진 없으면 헤딩 바
+            font_h = _load_font("bold", 38)
+            h_lines = self._wrap(draw, heading.strip(), font_h, self.w - 180)
+            lh_h = self._th(draw, "가", font_h)
+            h_block = lh_h * len(h_lines) + 8 * max(0, len(h_lines) - 1)
+            bar_h = h_block + 36
+
+            draw.rounded_rectangle(
+                [20, 50, self.w - 20, 50 + bar_h],
+                radius=14,
+                fill=_hex(self.t["accent"]),
+            )
+            if slide_num is not None:
+                draw.ellipse([50 - 22, 50 + bar_h // 2 - 22, 50 + 22, 50 + bar_h // 2 + 22], fill=(255, 255, 255))
+                font_n = _load_font("bold", 24)
+                nt = str(slide_num)
+                draw.text(
+                    (50 - self._tw(draw, nt, font_n) // 2,
+                     50 + bar_h // 2 - self._th(draw, nt, font_n) // 2),
+                    nt, font=font_n, fill=_hex(self.t["accent"]),
+                )
+                tx = 86
+            else:
+                tx = 50
+
+            hy = 50 + 18
+            for ln in h_lines:
+                draw.text((tx, hy), ln, font=font_h, fill=(255, 255, 255))
+                hy += lh_h + 8
+
+            text_area_top = 50 + bar_h + 20
+
+        # ── 본문 항목 카드 ──
+        font_body = _load_font("medium", 30)
+        font_desc = _load_font("regular", 24)
+        lh_body = self._th(draw, "가", font_body)
+        lh_desc = self._th(draw, "가", font_desc)
+
+        # 불렛 항목 파싱
+        items = []
+        current_item = None
+        for line in body.strip().split("\n"):
+            line = line.strip()
+            if not line:
+                if current_item:
+                    items.append(current_item)
+                    current_item = None
+                continue
+            is_bullet = False
+            text = line
+            if line.startswith(("-", "•", "·")):
+                is_bullet = True
+                text = line[1:].strip()
+            elif len(line) > 2 and line[0].isdigit() and line[1] in (".", ")"):
+                is_bullet = True
+                text = line[2:].strip()
+            if is_bullet:
+                if current_item:
+                    items.append(current_item)
+                current_item = {"title": text, "desc": ""}
+            else:
+                if current_item:
+                    current_item["desc"] += (" " if current_item["desc"] else "") + text
+                else:
+                    items.append({"title": text, "desc": ""})
+        if current_item:
+            items.append(current_item)
+        if not items:
+            items = [{"title": body.strip(), "desc": ""}]
+
+        pad_x = 50
+        item_max_w = self.w - pad_x * 2 - 30
+        bottom_pad = 60
+        available_h = self.h - text_area_top - bottom_pad
+        item_gap = 12
+        per_item = max(55, (available_h - item_gap * max(0, len(items) - 1)) // max(len(items), 1))
+
+        y = text_area_top + 10
+
+        for item in items:
+            if y + 50 > self.h - bottom_pad:
                 break
 
-        # 페이지 번호 (하단 우측)
-        if slide_num and total_slides:
-            font_page = _load_font("medium", 22)
-            page_text = f"{slide_num} / {total_slides}"
-            pw = self._text_width(draw, page_text, font_page)
+            card_h = per_item
+            # 아이템 카드 배경
+            draw.rounded_rectangle(
+                [pad_x, y, self.w - pad_x, y + card_h],
+                radius=12,
+                fill=_hex(self.t["item_bg"]),
+            )
+            # 좌측 액센트 바
+            draw.rounded_rectangle(
+                [pad_x, y + 4, pad_x + 5, y + card_h - 4],
+                radius=2,
+                fill=_hex(self.t["item_border"]),
+            )
+
+            tx = pad_x + 22
+            ty = y + 14
+            tlines = self._wrap(draw, item["title"], font_body, item_max_w)
+            for tl in tlines:
+                if ty + lh_body > y + card_h - 8:
+                    break
+                draw.text((tx, ty), tl, font=font_body, fill=_hex(self.t["heading_text"]))
+                ty += lh_body + 4
+
+            if item["desc"]:
+                ty += 4
+                dlines = self._wrap(draw, item["desc"], font_desc, item_max_w)
+                for dl in dlines:
+                    if ty + lh_desc > y + card_h - 8:
+                        break
+                    draw.text((tx, ty), dl, font=font_desc, fill=_hex(self.t["body_text"]))
+                    ty += lh_desc + 3
+
+            y += card_h + item_gap
+
+        # 페이지 번호
+        if slide_num is not None and total_slides is not None:
+            font_p = _load_font("regular", 22)
+            pt = f"{slide_num} / {total_slides}"
+            pw = self._tw(draw, pt, font_p)
             draw.text(
-                (card_x2 - inner_pad - pw, card_y2 - inner_pad),
-                page_text,
-                font=font_page,
-                fill=_hex(self.t["muted"]),
+                (self.w - pad_x - pw, self.h - 40),
+                pt, font=font_p, fill=_hex(self.t["muted"]),
             )
 
         return self._to_bytes(img)
 
-    # ── 마무리 슬라이드 ──
+    # ── 마무리: 사진 배경 + 풀 오버레이 + CTA ──
 
-    def render_closing(self, cta_text, account_name=""):
-        img = self._new_gradient_image(self.t["closing_bg1"], self.t["closing_bg2"])
+    def render_closing(self, cta_text, account_name="", bg_image=None):
+        photo = _open_image(bg_image)
 
-        # 장식 원
-        img = self._draw_decorative_circles(img, "#FFFFFF", alpha=20)
-        # 도트 패턴
-        img = self._draw_dot_pattern(img, "#FFFFFF", alpha=10, spacing=50)
+        if photo:
+            img = _fit_cover(photo, self.w, self.h)
+            # 블러 + 어두운 오버레이
+            img = img.filter(ImageFilter.GaussianBlur(radius=6))
+            oc = self.t["overlay_color"]
+            img = _solid_overlay(img, oc, self.t["overlay_alpha"] + 0.1)
+        else:
+            # 폴백: 그라디언트
+            img = Image.new("RGB", (self.w, self.h))
+            d = ImageDraw.Draw(img)
+            accent = _hex(self.t["accent"])
+            darker = tuple(max(0, c - 40) for c in accent)
+            for y in range(self.h):
+                t = y / max(self.h - 1, 1)
+                c = tuple(int(accent[i] + (darker[i] - accent[i]) * t) for i in range(3))
+                d.line([(0, y), (self.w, y)], fill=c)
 
         draw = ImageDraw.Draw(img)
-        max_w = self.w - self.pad * 2
+        pad = 100
 
-        font_cta = _load_font("serif", 46)
-        font_acc = _load_font("medium", 28)
+        font_cta = _load_font("serif", 48)
+        font_acc = _load_font("medium", 30)
 
-        cta_lines = self._wrap_text(draw, cta_text, font_cta, max_w - 40)
+        lines_cta = self._wrap(draw, cta_text, font_cta, self.w - pad * 2)
+        lh_cta = self._th(draw, "가", font_cta)
+        lh_acc = self._th(draw, "가", font_acc) if account_name else 0
 
-        cta_h = sum(
-            self._text_height(draw, ln, font_cta) for ln in cta_lines
-        ) + max(0, len(cta_lines) - 1) * 14
-
-        acc_h = 0
-        if account_name:
-            acc_h = self._text_height(draw, account_name, font_acc)
-
-        # 큰따옴표 아이콘 높이
-        quote_h = 60
-
+        block_cta = lh_cta * len(lines_cta) + 14 * max(0, len(lines_cta) - 1)
         gap = 60 if account_name else 0
-        total_h = quote_h + 30 + cta_h + gap + acc_h
-        y = (self.h - total_h) // 2
+        total = block_cta + gap + lh_acc
+        y = (self.h - total) // 2
 
-        # 큰따옴표 장식
-        font_quote = _load_font("serif", 100)
-        quote_char = "\u201C"  # "
-        qw = self._text_width(draw, quote_char, font_quote)
-
-        # 반투명 따옴표
+        # 반투명 패널
+        panel_pad = 30
         overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
         od = ImageDraw.Draw(overlay)
-        r, g, b = _hex(self.t["closing_text"])
-        od.text(
-            ((self.w - qw) // 2, y - 20),
-            quote_char,
-            font=font_quote,
-            fill=(r, g, b, 60),
+        od.rounded_rectangle(
+            [pad - panel_pad, y - panel_pad,
+             self.w - pad + panel_pad, y + total + panel_pad],
+            radius=20,
+            fill=(0, 0, 0, 50),
         )
-        img_rgba = img.convert("RGBA")
-        img_rgba = Image.alpha_composite(img_rgba, overlay)
-        img = img_rgba.convert("RGB")
+        img = Image.alpha_composite(img.convert("RGBA"), overlay).convert("RGB")
         draw = ImageDraw.Draw(img)
 
-        y += quote_h + 30
-
-        # CTA 텍스트
-        for ln in cta_lines:
-            lw = self._text_width(draw, ln, font_cta)
-            lh = self._text_height(draw, ln, font_cta)
-            draw.text(
-                ((self.w - lw) // 2, y),
-                ln,
-                font=font_cta,
-                fill=_hex(self.t["closing_text"]),
+        for ln in lines_cta:
+            lw = self._tw(draw, ln, font_cta)
+            self._draw_text_shadow(
+                draw, ((self.w - lw) // 2, y), ln, font_cta, (255, 255, 255),
+                shadow_color=(0, 0, 0), offset=2,
             )
-            y += lh + 14
+            y += lh_cta + 14
 
-        # 구분선 + 계정명
         if account_name:
-            y += 16
-
-            # 장식 구분선 (다이아몬드)
+            y += 12
             cx = self.w // 2
-            diamond_size = 4
-            line_half = 60
-            ct = _hex(self.t["closing_text"])
-
-            draw.line(
-                [(cx - line_half, y + diamond_size), (cx - diamond_size - 4, y + diamond_size)],
-                fill=ct,
-                width=1,
-            )
-            draw.polygon(
-                [
-                    (cx, y),
-                    (cx + diamond_size, y + diamond_size),
-                    (cx, y + diamond_size * 2),
-                    (cx - diamond_size, y + diamond_size),
-                ],
-                fill=ct,
-            )
-            draw.line(
-                [(cx + diamond_size + 4, y + diamond_size), (cx + line_half, y + diamond_size)],
-                fill=ct,
-                width=1,
-            )
-
-            y += diamond_size * 2 + 20
-
-            aw = self._text_width(draw, account_name, font_acc)
+            accent_c = _hex(self.t["accent"])
+            draw.line([(cx - 50, y), (cx + 50, y)], fill=accent_c, width=2)
+            y += 20
+            aw = self._tw(draw, account_name, font_acc)
             draw.text(
-                ((self.w - aw) // 2, y),
-                account_name,
-                font=font_acc,
-                fill=_hex(self.t["closing_text"]),
+                ((self.w - aw) // 2, y), account_name,
+                font=font_acc, fill=(200, 200, 200),
             )
 
         return self._to_bytes(img)
@@ -717,40 +562,33 @@ class CardNewsRenderer:
     # ── 전체 렌더 ──
 
     def render_all(self, slides_data):
-        """모든 슬라이드를 렌더링하여 PNG bytes 리스트로 반환.
+        """모든 슬라이드를 렌더링.
 
         slides_data 예시:
         [
-            {"type": "cover", "title": "...", "subtitle": "..."},
-            {"type": "content", "heading": "...", "body": "..."},
-            {"type": "closing", "cta_text": "...", "account_name": "..."},
+            {"type": "cover", "title": "...", "subtitle": "...", "bg_image": bytes|PIL|None},
+            {"type": "content", "heading": "...", "body": "...", "bg_image": ...},
+            {"type": "closing", "cta_text": "...", "account_name": "...", "bg_image": ...},
         ]
         """
         results = []
         content_idx = 0
         content_total = sum(1 for s in slides_data if s["type"] == "content")
-
         for slide in slides_data:
-            stype = slide["type"]
-            if stype == "cover":
-                results.append(
-                    self.render_cover(slide.get("title", ""), slide.get("subtitle", ""))
-                )
-            elif stype == "content":
+            st = slide["type"]
+            bg = slide.get("bg_image")
+            if st == "cover":
+                results.append(self.render_cover(
+                    slide.get("title", ""), slide.get("subtitle", ""), bg_image=bg,
+                ))
+            elif st == "content":
                 content_idx += 1
-                results.append(
-                    self.render_content(
-                        slide.get("heading", ""),
-                        slide.get("body", ""),
-                        slide_num=content_idx,
-                        total_slides=content_total,
-                    )
-                )
-            elif stype == "closing":
-                results.append(
-                    self.render_closing(
-                        slide.get("cta_text", ""),
-                        slide.get("account_name", ""),
-                    )
-                )
+                results.append(self.render_content(
+                    slide.get("heading", ""), slide.get("body", ""),
+                    slide_num=content_idx, total_slides=content_total, bg_image=bg,
+                ))
+            elif st == "closing":
+                results.append(self.render_closing(
+                    slide.get("cta_text", ""), slide.get("account_name", ""), bg_image=bg,
+                ))
         return results

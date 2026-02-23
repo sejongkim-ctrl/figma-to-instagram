@@ -894,13 +894,15 @@ with tab_url:
 
 # ── Tab 4: 카드뉴스 만들기 ──
 with tab_cardnews:
+    st.caption("사진 배경 위에 텍스트를 합성하여 카드뉴스를 만듭니다. 각 슬라이드에 배경 사진을 업로드하세요.")
+
     cn_col1, cn_col2 = st.columns(2)
     with cn_col1:
         cn_series_name = st.text_input(
             "시리즈 이름", placeholder="예: 오늘의 건강팁", key="cn_series_name"
         )
     with cn_col2:
-        cn_template = st.selectbox("템플릿", list(TEMPLATES.keys()), key="cn_template")
+        cn_template = st.selectbox("템플릿 (색상 테마)", list(TEMPLATES.keys()), key="cn_template")
 
     cn_size = st.radio(
         "이미지 크기",
@@ -916,6 +918,13 @@ with tab_cardnews:
     st.subheader("📘 표지")
     cn_cover_title = st.text_input("제목", placeholder="카드뉴스 제목", key="cn_cover_title")
     cn_cover_sub = st.text_input("부제 (선택)", placeholder="부제목", key="cn_cover_sub")
+    cn_cover_img = st.file_uploader(
+        "표지 배경 사진", type=["png", "jpg", "jpeg"],
+        key="cn_cover_img",
+        help="배경으로 사용할 사진. 없으면 단색 배경으로 생성됩니다.",
+    )
+    if cn_cover_img:
+        st.image(cn_cover_img, caption="표지 배경 미리보기", width=200)
 
     st.divider()
 
@@ -945,7 +954,16 @@ with tab_cardnews:
                 value=slide.get("body", ""),
                 height=100,
                 key=f"cn_body_{i}",
+                help="- 로 시작하면 불렛 항목으로 표시됩니다",
             )
+            cn_slide_img = st.file_uploader(
+                f"배경 사진 {i + 1} (선택)",
+                type=["png", "jpg", "jpeg"],
+                key=f"cn_slide_img_{i}",
+                help="본문 상단에 사진이 들어갑니다. 없으면 텍스트만 표시.",
+            )
+            if cn_slide_img:
+                st.image(cn_slide_img, caption=f"슬라이드 {i+1} 배경", width=150)
             st.session_state.cardnews_slides[i] = {"heading": h, "body": b}
 
     if slides_to_remove:
@@ -962,6 +980,7 @@ with tab_cardnews:
     cn_use_closing = st.checkbox("📌 마무리 슬라이드 추가", value=True, key="cn_use_closing")
     cn_cta = ""
     cn_account = ""
+    cn_closing_img = None
     if cn_use_closing:
         cn_cta = st.text_input(
             "CTA 문구", value="더 많은 정보가 궁금하다면?", key="cn_cta"
@@ -970,6 +989,11 @@ with tab_cardnews:
             "계정명",
             value=f"@{selected_account.get('name', '')}",
             key="cn_account",
+        )
+        cn_closing_img = st.file_uploader(
+            "마무리 배경 사진 (선택)", type=["png", "jpg", "jpeg"],
+            key="cn_closing_img",
+            help="블러 처리되어 배경으로 사용됩니다.",
         )
 
     st.divider()
@@ -982,21 +1006,45 @@ with tab_cardnews:
             if not cn_cover_title.strip():
                 st.warning("표지 제목을 입력하세요.")
             else:
-                slides_data = [
-                    {"type": "cover", "title": cn_cover_title, "subtitle": cn_cover_sub}
-                ]
-                for s in st.session_state.cardnews_slides:
+                # 표지 데이터
+                cover_bg = cn_cover_img.read() if cn_cover_img else None
+                if cn_cover_img:
+                    cn_cover_img.seek(0)
+                slides_data = [{
+                    "type": "cover",
+                    "title": cn_cover_title,
+                    "subtitle": cn_cover_sub,
+                    "bg_image": cover_bg,
+                }]
+                # 본문 데이터
+                for i, s in enumerate(st.session_state.cardnews_slides):
                     if s.get("heading") or s.get("body"):
+                        slide_img_key = f"cn_slide_img_{i}"
+                        slide_img_file = st.session_state.get(slide_img_key)
+                        slide_bg = None
+                        if slide_img_file is not None:
+                            try:
+                                slide_bg = slide_img_file.read()
+                                slide_img_file.seek(0)
+                            except Exception:
+                                pass
                         slides_data.append({
                             "type": "content",
                             "heading": s["heading"],
                             "body": s["body"],
+                            "bg_image": slide_bg,
                         })
+                # 마무리 데이터
                 if cn_use_closing and cn_cta.strip():
+                    closing_bg = None
+                    if cn_closing_img:
+                        closing_bg = cn_closing_img.read()
+                        cn_closing_img.seek(0)
                     slides_data.append({
                         "type": "closing",
                         "cta_text": cn_cta,
                         "account_name": cn_account,
+                        "bg_image": closing_bg,
                     })
 
                 renderer = CardNewsRenderer(cn_template, size=size_tuple)
