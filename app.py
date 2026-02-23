@@ -703,8 +703,12 @@ if "upload_counter" not in st.session_state:
     st.session_state.upload_counter = 0
 if "url_counter" not in st.session_state:
     st.session_state.url_counter = 0
+if "pencil_series" not in st.session_state:
+    st.session_state.pencil_series = {}
+if "pencil_manifest" not in st.session_state:
+    st.session_state.pencil_manifest = None
 
-tab_figma, tab_upload, tab_url = st.tabs(["📐 Figma", "📷 이미지 업로드", "🔗 URL 입력"])
+tab_figma, tab_pencil, tab_upload, tab_url = st.tabs(["📐 Figma", "✏️ Pencil.dev", "📷 이미지 업로드", "🔗 URL 입력"])
 
 figma_selected = {}  # Figma 탭에서 선택된 항목
 
@@ -763,7 +767,72 @@ with tab_figma:
                     if len(selected_frames) >= 1:
                         figma_selected[grp] = [f["id"] for f in selected_frames]
 
-# ── Tab 2: 이미지 업로드 ──
+# ── Tab 2: Pencil.dev ──
+with tab_pencil:
+    st.caption("Pencil.dev에서 export한 카드뉴스를 GitHub Gist 매니페스트로 불러옵니다.")
+
+    pencil_gist_url = st.text_input(
+        "Gist URL 또는 ID",
+        value=os.getenv("PENCIL_GIST_ID", ""),
+        help="cardupload 스크립트가 생성한 GitHub Gist URL 또는 ID",
+        key="pencil_gist_input",
+    )
+
+    col_pencil_load, col_pencil_info = st.columns([1, 3])
+    with col_pencil_load:
+        if st.button("🔄 Pencil.dev 읽어오기", use_container_width=True):
+            gist_id = pencil_gist_url.strip().rstrip("/").split("/")[-1] if pencil_gist_url.strip() else ""
+            if not gist_id:
+                st.error("Gist URL 또는 ID를 입력해주세요.")
+            else:
+                with st.spinner("Gist에서 매니페스트를 가져오는 중..."):
+                    try:
+                        raw_url = f"https://gist.githubusercontent.com/{gist_id}/raw/pencil_manifest.json"
+                        resp = req.get(raw_url, timeout=10)
+                        resp.raise_for_status()
+                        manifest = resp.json()
+                        st.session_state.pencil_manifest = manifest
+                    except Exception as e:
+                        st.error(f"Gist 불러오기 실패: {e}")
+
+    with col_pencil_info:
+        if st.session_state.pencil_manifest:
+            series = st.session_state.pencil_manifest.get("series", {})
+            updated = st.session_state.pencil_manifest.get("updated_at", "")[:16]
+            st.caption(f"총 {len(series)}개 시리즈 | 최종 업데이트: {updated}")
+
+    if st.session_state.pencil_manifest:
+        series = st.session_state.pencil_manifest.get("series", {})
+
+        if not series:
+            st.info("매니페스트에 시리즈가 없습니다.")
+        else:
+            selected_pencil = st.multiselect(
+                "시리즈 선택 (여러 개 선택 가능, 최신순)",
+                list(series.keys()),
+                format_func=lambda x: f"{x} ({series[x]['count']}장)",
+                key="pencil_series_select",
+            )
+
+            if selected_pencil:
+                st.info(f"✅ {len(selected_pencil)}개 시리즈 선택됨")
+
+                for sname in selected_pencil:
+                    sdata = series[sname]
+                    images = sdata.get("images", [])
+                    with st.expander(f"📁 {sname} ({len(images)}장)", expanded=True):
+                        preview_cols = st.columns(min(len(images), 5))
+                        for i, img in enumerate(images):
+                            with preview_cols[i % 5]:
+                                try:
+                                    st.image(img["url"], caption=img["name"], use_container_width=True)
+                                except Exception:
+                                    st.caption(f"{i+1}. {img['name']}")
+
+                    urls = [img["url"] for img in images]
+                    st.session_state.pencil_series[sname] = urls
+
+# ── Tab 3: 이미지 업로드 ──
 with tab_upload:
     st.caption("PC에서 이미지 파일을 직접 올려서 Instagram에 발행합니다.")
 
@@ -880,6 +949,10 @@ for grp, node_ids in figma_selected.items():
 # 업로드 항목
 for sname, sfiles in st.session_state.upload_series.items():
     all_selected[f"📷 {sname}"] = {"source": "upload", "files": sfiles, "count": len(sfiles)}
+
+# Pencil.dev 항목
+for sname, surls in st.session_state.pencil_series.items():
+    all_selected[f"✏️ {sname}"] = {"source": "url", "urls": surls, "count": len(surls)}
 
 # URL 항목
 for sname, surls in st.session_state.url_series.items():
