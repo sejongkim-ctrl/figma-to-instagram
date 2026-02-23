@@ -197,3 +197,30 @@ class InstagramClient:
         resp = requests.get(url, params=params)
         self._check_response(resp)
         return resp.json()
+
+    def get_media_list(self, limit=25):
+        """최근 게시물 목록을 조회합니다."""
+        url = f"{self.base_url}/{self.user_id}/media"
+        params = {
+            "fields": "id,caption,media_type,media_url,thumbnail_url,timestamp,like_count,comments_count,permalink",
+            "limit": limit,
+            "access_token": self.access_token,
+        }
+        resp = requests.get(url, params=params)
+        self._check_response(resp)
+        return resp.json()
+
+    def get_media_insights(self, media_id):
+        """게시물의 인사이트(도달, 노출, 저장) 데이터를 조회합니다."""
+        url = f"{self.base_url}/{media_id}/insights"
+        params = {
+            "metric": "impressions,reach,saved",
+            "access_token": self.access_token,
+        }
+        try:
+            resp = requests.get(url, params=params)
+            self._check_response(resp)
+            data = resp.json().get("data", [])
+            return {item["name"]: item["values"][0]["value"] for item in data}
+        except Exception:
+            return {}

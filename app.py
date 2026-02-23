@@ -271,6 +271,131 @@ def publish_one_group(group_name, group_info, caption, scheduled_time, account, 
     return result_info
 
 
+# ── 인사이트 페이지 ──────────────────────────────────────
+
+
+def render_insights_page(account):
+    """콘텐츠 인사이트 페이지를 렌더링합니다."""
+    st.header("📊 콘텐츠 인사이트")
+    st.caption(f"계정: **{account['name']}** — 사이드바에서 변경 가능")
+
+    col_fetch, col_limit = st.columns([2, 1])
+    with col_limit:
+        limit = st.selectbox("조회 수", [12, 25, 50], index=0, key="insights_limit")
+    with col_fetch:
+        fetch_clicked = st.button("📊 최근 게시물 조회", use_container_width=True)
+
+    if fetch_clicked:
+        ig = InstagramClient()
+        ig.user_id = account["instagram_user_id"].strip()
+        ig.access_token = account["access_token"].strip()
+
+        with st.spinner("게시물 목록 조회 중..."):
+            media_data = ig.get_media_list(limit=limit)
+            posts = media_data.get("data", [])
+
+        if not posts:
+            st.info("게시물이 없습니다.")
+            return
+
+        progress = st.progress(0, text="인사이트 데이터 수집 중...")
+        for i, post in enumerate(posts):
+            try:
+                post["insights"] = ig.get_media_insights(post["id"])
+            except Exception:
+                post["insights"] = {}
+            progress.progress((i + 1) / len(posts))
+        progress.empty()
+
+        st.session_state.insights_posts = posts
+
+    if not st.session_state.get("insights_posts"):
+        st.info("'최근 게시물 조회' 버튼을 클릭하세요.")
+        return
+
+    posts = st.session_state.insights_posts
+
+    # ── 요약 지표 ──
+    total_likes = sum(p.get("like_count", 0) for p in posts)
+    total_comments = sum(p.get("comments_count", 0) for p in posts)
+    total_saves = sum(p.get("insights", {}).get("saved", 0) for p in posts)
+    total_reach = sum(p.get("insights", {}).get("reach", 0) for p in posts)
+    total_impressions = sum(p.get("insights", {}).get("impressions", 0) for p in posts)
+
+    m1, m2, m3, m4, m5 = st.columns(5)
+    m1.metric("❤️ 좋아요", f"{total_likes:,}")
+    m2.metric("💬 댓글", f"{total_comments:,}")
+    m3.metric("📌 저장", f"{total_saves:,}")
+    m4.metric("👁️ 도달", f"{total_reach:,}")
+    m5.metric("📊 노출", f"{total_impressions:,}")
+
+    st.divider()
+
+    # ── 게시물 카드 그리드 ──
+    type_label = {"IMAGE": "📷 이미지", "VIDEO": "🎬 동영상", "CAROUSEL_ALBUM": "📑 캐러셀"}
+
+    for row_start in range(0, len(posts), 3):
+        row_posts = posts[row_start:row_start + 3]
+        cols = st.columns(3)
+        for col, post in zip(cols, row_posts):
+            with col:
+                media_url = post.get("media_url") or post.get("thumbnail_url")
+                if media_url:
+                    try:
+                        st.image(media_url, use_container_width=True)
+                    except Exception:
+                        st.info("🖼️ 이미지 로드 불가")
+                else:
+                    st.info("🖼️ 썸네일 없음")
+
+                ts = post.get("timestamp", "")[:10]
+                mtype = type_label.get(post.get("media_type", ""), "기타")
+                st.caption(f"{ts} · {mtype}")
+
+                likes = post.get("like_count", 0)
+                comments = post.get("comments_count", 0)
+                ins = post.get("insights", {})
+                saves = ins.get("saved", "-")
+                reach = ins.get("reach", "-")
+                impressions = ins.get("impressions", "-")
+
+                st.markdown(
+                    f"❤️ **{likes}**  💬 **{comments}**  📌 **{saves}**  "
+                    f"👁️ **{reach}**  📊 **{impressions}**"
+                )
+
+                caption = post.get("caption") or ""
+                if caption:
+                    st.caption(caption[:80] + ("..." if len(caption) > 80 else ""))
+
+                permalink = post.get("permalink", "")
+                if permalink:
+                    st.markdown(f"[Instagram에서 보기]({permalink})")
+
+    # ── CSV 다운로드 ──
+    st.divider()
+    import pandas as pd
+
+    rows = []
+    for post in posts:
+        ins = post.get("insights", {})
+        rows.append({
+            "날짜": post.get("timestamp", "")[:10],
+            "타입": post.get("media_type", ""),
+            "좋아요": post.get("like_count", 0),
+            "댓글": post.get("comments_count", 0),
+            "저장": ins.get("saved", ""),
+            "도달": ins.get("reach", ""),
+            "노출": ins.get("impressions", ""),
+            "캡션": (post.get("caption") or "")[:100],
+            "링크": post.get("permalink", ""),
+        })
+
+    df = pd.DataFrame(rows)
+    csv = df.to_csv(index=False).encode("utf-8-sig")
+    st.download_button("📥 CSV 다운로드", csv, "instagram_insights.csv", "text/csv")
+
+
 # ── 페이지 설정 ───────────────────────────────────────────
 
 st.set_page_config(
@@ -279,11 +404,16 @@ st.set_page_config(
     layout="wide",
 )
 
-st.title("📸 Instagram 게시물 올려줘!")
-
 # ── 사이드바: 계정 & 설정 ─────────────────────────────────
 
 with st.sidebar:
+    page = st.radio(
+        "메뉴",
+        ["📸 게시물 발행", "📊 콘텐츠 인사이트"],
+        horizontal=True,
+        label_visibility="collapsed",
+    )
+    st.divider()
     st.header("설정")
 
     accounts = load_accounts()
@@ -498,11 +628,21 @@ with st.sidebar:
                 st.success(f"'{del_name}' 계정이 삭제되었습니다.")
                 st.rerun()
 
-# ── 메인: Step 1 - 콘텐츠 선택 ─────────────────────────────
+# ── 메인 콘텐츠 ──────────────────────────────────────────
 
 if not accounts:
     st.info("사이드바에서 Instagram 계정을 먼저 추가해주세요.")
     st.stop()
+
+# 페이지 라우팅
+if page == "📊 콘텐츠 인사이트":
+    st.title("📊 콘텐츠 인사이트")
+    render_insights_page(selected_account)
+    st.stop()
+
+st.title("📸 Instagram 게시물 올려줘!")
+
+# ── 메인: Step 1 - 콘텐츠 선택 ─────────────────────────────
 
 st.header("Step 1. 콘텐츠 선택")
 
