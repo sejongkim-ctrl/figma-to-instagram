@@ -13,6 +13,21 @@ class InstagramClient:
         self.user_id = Config.IG_USER_ID
         self.access_token = Config.IG_ACCESS_TOKEN
 
+    @staticmethod
+    def _check_response(resp):
+        """API 응답을 확인하고, 에러 시 상세 메시지를 포함하여 예외를 발생시킵니다."""
+        if resp.status_code >= 400:
+            try:
+                error_data = resp.json().get("error", {})
+                msg = error_data.get("message", resp.text)
+                code = error_data.get("code", "")
+                subcode = error_data.get("error_subcode", "")
+                raise RuntimeError(
+                    f"Instagram API 에러 [{resp.status_code}]: {msg} (code={code}, subcode={subcode})"
+                )
+            except (ValueError, KeyError):
+                self._check_response(resp)
+
     def _create_child_container(self, image_url):
         """Step 1: 개별 캐러셀 아이템 컨테이너를 생성합니다."""
         url = f"{self.base_url}/{self.user_id}/media"
@@ -22,7 +37,7 @@ class InstagramClient:
             "access_token": self.access_token,
         }
         resp = requests.post(url, data=params)
-        resp.raise_for_status()
+        self._check_response(resp)
         container_id = resp.json()["id"]
         logger.info(f"  child container 생성: {container_id}")
         return container_id
@@ -65,7 +80,7 @@ class InstagramClient:
             params["scheduled_publish_time"] = ts
 
         resp = requests.post(url, data=params)
-        resp.raise_for_status()
+        self._check_response(resp)
         carousel_id = resp.json()["id"]
         logger.info(f"  carousel container 생성: {carousel_id}")
         return carousel_id
@@ -78,7 +93,7 @@ class InstagramClient:
             "access_token": self.access_token,
         }
         resp = requests.post(url, data=params)
-        resp.raise_for_status()
+        self._check_response(resp)
         media_id = resp.json()["id"]
         logger.info(f"  발행 완료! media_id: {media_id}")
         return media_id
@@ -100,7 +115,7 @@ class InstagramClient:
             params["scheduled_publish_time"] = ts
 
         resp = requests.post(url, data=params)
-        resp.raise_for_status()
+        self._check_response(resp)
         container_id = resp.json()["id"]
         logger.info(f"  single container 생성: {container_id}")
 
@@ -161,5 +176,5 @@ class InstagramClient:
             "access_token": self.access_token,
         }
         resp = requests.get(url, params=params)
-        resp.raise_for_status()
+        self._check_response(resp)
         return resp.json()
