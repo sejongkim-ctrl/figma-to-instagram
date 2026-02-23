@@ -33,13 +33,23 @@ ACCOUNTS_FILE = os.path.join(os.path.dirname(__file__), "accounts.json")
 # ── 계정 관리 ──────────────────────────────────────────────
 
 
+def _clean_account(account):
+    """토큰/ID 값의 공백·개행을 제거합니다."""
+    cleaned = dict(account)
+    for key in ("access_token", "instagram_user_id"):
+        if key in cleaned and isinstance(cleaned[key], str):
+            cleaned[key] = cleaned[key].strip()
+    return cleaned
+
+
 def load_accounts():
     if os.path.exists(ACCOUNTS_FILE):
         with open(ACCOUNTS_FILE, "r", encoding="utf-8") as f:
-            return json.load(f).get("accounts", [])
+            raw = json.load(f).get("accounts", [])
+            return [_clean_account(a) for a in raw]
     try:
         if "accounts" in st.secrets:
-            return [dict(a) for a in st.secrets["accounts"]]
+            return [_clean_account(dict(a)) for a in st.secrets["accounts"]]
     except Exception:
         pass
     return []
@@ -131,6 +141,19 @@ def publish_one_group(group_name, node_ids, caption, scheduled_time, account, st
     result_info = {"group": group_name, "count": len(node_ids), "caption": caption, "account_name": account["name"], "success": False}
 
     try:
+        # 토큰 사전 검증
+        status_container.write(f"🔑 [{group_name}] 토큰 확인 중...")
+        token = account["access_token"].strip()
+        uid = account["instagram_user_id"].strip()
+        verify_resp = req.get(
+            f"https://graph.facebook.com/v21.0/{uid}",
+            params={"fields": "id", "access_token": token},
+            timeout=10,
+        )
+        if verify_resp.status_code != 200:
+            err = verify_resp.json().get("error", {}).get("message", verify_resp.text)
+            raise RuntimeError(f"토큰 검증 실패: {err}")
+
         status_container.write(f"📐 [{group_name}] Figma에서 이미지 추출 중...")
         figma = FigmaClient()
         image_urls = figma.export_images(node_ids, fmt="png", scale=2)
@@ -150,8 +173,8 @@ def publish_one_group(group_name, node_ids, caption, scheduled_time, account, st
 
         status_container.write(f"📸 [{group_name}] Instagram에 발행 중...")
         ig = InstagramClient()
-        ig.user_id = account["instagram_user_id"]
-        ig.access_token = account["access_token"]
+        ig.user_id = uid
+        ig.access_token = token
 
         if len(public_urls) == 1:
             result = ig.publish_single(public_urls[0], caption, scheduled_time)
