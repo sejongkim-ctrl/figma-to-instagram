@@ -23,6 +23,7 @@ try:
 except ImportError:
     pass
 
+from card_news import CardNewsRenderer, TEMPLATES
 from figma_client import FigmaClient
 from image_host import ImageHost
 from instagram_client import InstagramClient
@@ -244,6 +245,19 @@ def publish_one_group(group_name, group_info, caption, scheduled_time, account, 
         elif source == "url":
             public_urls = list(group_info["urls"])
             status_container.write(f"🔗 [{group_name}] URL {len(public_urls)}개 확인됨")
+
+        elif source == "cardnews":
+            images = group_info["images"]
+            status_container.write(
+                f"✏️ [{group_name}] 카드뉴스 imgbb 업로드 중 ({len(images)}장)..."
+            )
+            public_urls = []
+            for i, img_bytes in enumerate(images):
+                status_container.write(
+                    f"☁️ [{group_name}] 업로드 {i + 1}/{len(images)}"
+                )
+                url = upload_bytes_to_imgbb(img_bytes, f"cardnews_{i + 1}.png")
+                public_urls.append(url)
 
         else:
             raise ValueError(f"알 수 없는 소스: {source}")
@@ -703,8 +717,16 @@ if "upload_counter" not in st.session_state:
     st.session_state.upload_counter = 0
 if "url_counter" not in st.session_state:
     st.session_state.url_counter = 0
+if "cardnews_series" not in st.session_state:
+    st.session_state.cardnews_series = {}
+if "cardnews_slides" not in st.session_state:
+    st.session_state.cardnews_slides = []
+if "cardnews_preview" not in st.session_state:
+    st.session_state.cardnews_preview = None
 
-tab_figma, tab_upload, tab_url = st.tabs(["📐 Figma", "📷 이미지 업로드", "🔗 URL 입력"])
+tab_figma, tab_upload, tab_url, tab_cardnews = st.tabs(
+    ["📐 Figma", "📷 이미지 업로드", "🔗 URL 입력", "✏️ 카드뉴스 만들기"]
+)
 
 figma_selected = {}  # Figma 탭에서 선택된 항목
 
@@ -870,6 +892,155 @@ with tab_url:
                     del st.session_state.url_series[sname]
                     st.rerun()
 
+# ── Tab 4: 카드뉴스 만들기 ──
+with tab_cardnews:
+    cn_col1, cn_col2 = st.columns(2)
+    with cn_col1:
+        cn_series_name = st.text_input(
+            "시리즈 이름", placeholder="예: 오늘의 건강팁", key="cn_series_name"
+        )
+    with cn_col2:
+        cn_template = st.selectbox("템플릿", list(TEMPLATES.keys()), key="cn_template")
+
+    cn_size = st.radio(
+        "이미지 크기",
+        ["1080×1080 정사각형", "1080×1350 세로형"],
+        horizontal=True,
+        key="cn_size",
+    )
+    size_tuple = (1080, 1080) if "정사각형" in cn_size else (1080, 1350)
+
+    st.divider()
+
+    # ── 표지 슬라이드 ──
+    st.subheader("📘 표지")
+    cn_cover_title = st.text_input("제목", placeholder="카드뉴스 제목", key="cn_cover_title")
+    cn_cover_sub = st.text_input("부제 (선택)", placeholder="부제목", key="cn_cover_sub")
+
+    st.divider()
+
+    # ── 본문 슬라이드 (동적 추가) ──
+    st.subheader("📄 본문 슬라이드")
+
+    if st.button("➕ 슬라이드 추가", key="cn_add_slide"):
+        st.session_state.cardnews_slides.append({"heading": "", "body": ""})
+        st.rerun()
+
+    slides_to_remove = []
+    for i, slide in enumerate(st.session_state.cardnews_slides):
+        with st.container():
+            col_h, col_del = st.columns([5, 1])
+            with col_h:
+                h = st.text_input(
+                    f"소제목 {i + 1}",
+                    value=slide.get("heading", ""),
+                    key=f"cn_heading_{i}",
+                )
+            with col_del:
+                st.write("")
+                if st.button("🗑️", key=f"cn_del_{i}"):
+                    slides_to_remove.append(i)
+            b = st.text_area(
+                f"본문 {i + 1}",
+                value=slide.get("body", ""),
+                height=100,
+                key=f"cn_body_{i}",
+            )
+            st.session_state.cardnews_slides[i] = {"heading": h, "body": b}
+
+    if slides_to_remove:
+        for idx in sorted(slides_to_remove, reverse=True):
+            st.session_state.cardnews_slides.pop(idx)
+        st.rerun()
+
+    if not st.session_state.cardnews_slides:
+        st.info("'➕ 슬라이드 추가' 버튼을 눌러 본문 슬라이드를 추가하세요.")
+
+    st.divider()
+
+    # ── 마무리 슬라이드 ──
+    cn_use_closing = st.checkbox("📌 마무리 슬라이드 추가", value=True, key="cn_use_closing")
+    cn_cta = ""
+    cn_account = ""
+    if cn_use_closing:
+        cn_cta = st.text_input(
+            "CTA 문구", value="더 많은 정보가 궁금하다면?", key="cn_cta"
+        )
+        cn_account = st.text_input(
+            "계정명",
+            value=f"@{selected_account.get('name', '')}",
+            key="cn_account",
+        )
+
+    st.divider()
+
+    # ── 미리보기 + 시리즈 추가 ──
+    cn_col_prev, cn_col_add = st.columns(2)
+
+    with cn_col_prev:
+        if st.button("👁️ 미리보기", key="cn_preview", use_container_width=True):
+            if not cn_cover_title.strip():
+                st.warning("표지 제목을 입력하세요.")
+            else:
+                slides_data = [
+                    {"type": "cover", "title": cn_cover_title, "subtitle": cn_cover_sub}
+                ]
+                for s in st.session_state.cardnews_slides:
+                    if s.get("heading") or s.get("body"):
+                        slides_data.append({
+                            "type": "content",
+                            "heading": s["heading"],
+                            "body": s["body"],
+                        })
+                if cn_use_closing and cn_cta.strip():
+                    slides_data.append({
+                        "type": "closing",
+                        "cta_text": cn_cta,
+                        "account_name": cn_account,
+                    })
+
+                renderer = CardNewsRenderer(cn_template, size=size_tuple)
+                st.session_state.cardnews_preview = renderer.render_all(slides_data)
+                st.rerun()
+
+    with cn_col_add:
+        if st.button("➕ 시리즈 추가", key="cn_add_series", use_container_width=True):
+            if not cn_series_name.strip():
+                st.warning("시리즈 이름을 입력하세요.")
+            elif cn_series_name in st.session_state.cardnews_series:
+                st.warning("이미 존재하는 이름입니다.")
+            elif not st.session_state.cardnews_preview:
+                st.warning("먼저 미리보기를 실행하세요.")
+            else:
+                st.session_state.cardnews_series[cn_series_name] = {
+                    "images": st.session_state.cardnews_preview
+                }
+                st.session_state.cardnews_preview = None
+                st.session_state.cardnews_slides = []
+                st.success(f"✅ '{cn_series_name}' 시리즈 추가 완료!")
+                st.rerun()
+
+    # 미리보기 표시
+    if st.session_state.cardnews_preview:
+        st.subheader("미리보기")
+        prev_cols = st.columns(min(len(st.session_state.cardnews_preview), 5))
+        for i, img_bytes in enumerate(st.session_state.cardnews_preview):
+            with prev_cols[i % len(prev_cols)]:
+                st.image(img_bytes, caption=f"{i + 1}장", use_container_width=True)
+
+    # 추가된 카드뉴스 시리즈 목록
+    if st.session_state.cardnews_series:
+        st.divider()
+        st.subheader("추가된 시리즈")
+        for sname, sdata in list(st.session_state.cardnews_series.items()):
+            col1, col2 = st.columns([4, 1])
+            with col1:
+                st.write(f"✏️ **{sname}** — {len(sdata['images'])}장")
+            with col2:
+                if st.button("❌ 삭제", key=f"del_cn_{sname}"):
+                    del st.session_state.cardnews_series[sname]
+                    st.rerun()
+
 # ── 전체 소스 통합 ──
 all_selected = {}
 
@@ -884,6 +1055,12 @@ for sname, sfiles in st.session_state.upload_series.items():
 # URL 항목
 for sname, surls in st.session_state.url_series.items():
     all_selected[f"🔗 {sname}"] = {"source": "url", "urls": surls, "count": len(surls)}
+
+# 카드뉴스 항목
+for sname, sdata in st.session_state.cardnews_series.items():
+    all_selected[f"✏️ {sname}"] = {
+        "source": "cardnews", "images": sdata["images"], "count": len(sdata["images"])
+    }
 
 if all_selected:
     st.session_state.all_selected = all_selected
@@ -936,6 +1113,12 @@ if st.session_state.get("all_selected"):
                             st.image(url, caption=f"{i + 1}장", use_container_width=True)
                         except Exception:
                             st.caption(f"{i + 1}. {url[:40]}...")
+
+            elif grp_info["source"] == "cardnews":
+                preview_cols = st.columns(min(grp_info["count"], 5))
+                for i, img_bytes in enumerate(grp_info["images"]):
+                    with preview_cols[i % len(preview_cols)]:
+                        st.image(img_bytes, caption=f"{i + 1}장", use_container_width=True)
 
             grp_account = st.selectbox(
                 "계정",
